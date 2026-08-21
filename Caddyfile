@@ -1,0 +1,48 @@
+# Caddy config for local web apps / dashboards / utilities
+# Run with: .\caddy.exe run --config Caddyfile
+# All apps live as subfolders of this directory and are served at:
+#   http://localhost:8080/<app-name>/
+{
+	# Disable automatic HTTPS so Caddy stays on plain HTTP
+	auto_https off
+
+	# Admin API (optional — lets you reload config live via HTTP API)
+	admin localhost:2019
+}
+
+http://localhost:8080 {
+	root * .
+
+	# ── App API routes (most-specific first) ──────────────────────────────
+
+	# healthcheck — reverse-proxy the Python uptime API
+	handle /healthcheck/api/* {
+		uri strip_prefix /healthcheck/api
+		reverse_proxy localhost:8081
+	}
+
+	# prism — PM knowledge dashboard API
+	handle /prism/api/* {
+		uri strip_prefix /prism/api
+		reverse_proxy localhost:8082
+	}
+
+	# -----------------------------------------------------------------------
+	# Add new app API routes here, e.g.:
+	#
+	# handle /myapp/api/* {
+	# 	uri strip_prefix /myapp/api
+	# 	reverse_proxy localhost:3000
+	# }
+	# -----------------------------------------------------------------------
+
+	# ── Static file server (catch-all) ────────────────────────────────────
+	handle {
+		file_server browse
+	}
+
+	# Friendly error pages
+	handle_errors {
+		respond "{http.error.status_code} {http.error.status_text}" {http.error.status_code}
+	}
+}

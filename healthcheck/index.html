@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<!-- Start API:  python healthcheck\api-server.py  -->
+	<!-- Start web:  .\caddy.exe run --config Caddyfile -->
+	<title>Health Check</title>
+	<style>
+		*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+			background: #f0f2f5;
+			min-height: 100vh;
+			padding: 2.5rem 1.5rem;
+			color: #111827;
+		}
+
+		header {
+			text-align: center;
+			margin-bottom: 2.25rem;
+		}
+		header h1 {
+			font-size: 0.75rem;
+			font-weight: 600;
+			letter-spacing: 0.12em;
+			text-transform: uppercase;
+			color: #9ca3af;
+		}
+
+		.grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+			gap: 1rem;
+			max-width: 1080px;
+			margin: 0 auto;
+		}
+
+		/* ── Cards ── */
+		.card {
+			background: #fff;
+			border-radius: 14px;
+			padding: 1.4rem 1.6rem;
+			box-shadow: 0 1px 4px rgba(0,0,0,.07), 0 0 0 1px rgba(0,0,0,.04);
+		}
+		.card-label {
+			font-size: 0.7rem;
+			font-weight: 700;
+			letter-spacing: 0.1em;
+			text-transform: uppercase;
+			color: #9ca3af;
+			margin-bottom: 0.65rem;
+		}
+		.card-value {
+			font-size: 2rem;
+			font-weight: 700;
+			line-height: 1;
+			font-variant-numeric: tabular-nums;
+		}
+		.card-sub {
+			font-size: 0.78rem;
+			color: #9ca3af;
+			margin-top: 0.45rem;
+		}
+
+		/* ── Status card (full-width) ── */
+		.status-card {
+			grid-column: 1 / -1;
+			display: flex;
+			align-items: center;
+			gap: 1.1rem;
+		}
+		.status-dot {
+			flex-shrink: 0;
+			width: 14px;
+			height: 14px;
+			border-radius: 50%;
+			background: #facc15;
+			box-shadow: 0 0 0 5px rgba(250,204,21,.18);
+			transition: background .3s, box-shadow .3s;
+		}
+		.status-dot.ok    { background: #22c55e; box-shadow: 0 0 0 5px rgba(34,197,94,.18); }
+		.status-dot.error { background: #ef4444; box-shadow: 0 0 0 5px rgba(239,68,68,.18); }
+		.status-text { font-size: 1.2rem; font-weight: 700; }
+		.status-meta { font-size: 0.78rem; color: #9ca3af; margin-top: 0.2rem; }
+
+		/* ── Latency coloring ── */
+		.good { color: #16a34a; }
+		.warn { color: #d97706; }
+		.bad  { color: #dc2626; }
+		.muted { color: #9ca3af; }
+
+		/* ── Clocks ── */
+		.clock-value { font-size: 1.75rem; }
+		.clock-date  { font-size: 0.82rem; color: #6b7280; margin-top: 0.3rem; }
+		.clock-tz    { font-size: 0.68rem; color: #9ca3af; margin-top: 0.2rem; font-style: italic; }
+	</style>
+</head>
+<body>
+	<header><h1>System Health</h1></header>
+
+	<div class="grid">
+
+		<!-- Status ────────────────────────────────── -->
+		<div class="card status-card">
+			<div class="status-dot" id="dot"></div>
+			<div>
+				<div class="status-text" id="statusText">Checking…</div>
+				<div class="status-meta" id="statusMeta"></div>
+			</div>
+		</div>
+
+		<!-- Latency ───────────────────────────────── -->
+		<div class="card">
+			<div class="card-label">Round-trip latency</div>
+			<div class="card-value muted" id="latVal">—</div>
+			<div class="card-sub">browser → Caddy → API</div>
+		</div>
+
+		<!-- OS Uptime ─────────────────────────────── -->
+		<div class="card">
+			<div class="card-label">OS uptime</div>
+			<div class="card-value" id="uptimeVal" style="font-size:1.5rem">—</div>
+			<div class="card-sub" id="uptimeSub"></div>
+		</div>
+
+		<!-- Los Angeles ───────────────────────────── -->
+		<div class="card">
+			<div class="card-label">Los Angeles</div>
+			<div class="clock-value" id="tLA">—</div>
+			<div class="clock-date"  id="dLA"></div>
+			<div class="clock-tz">America / Los_Angeles</div>
+		</div>
+
+		<!-- Boston ────────────────────────────────── -->
+		<div class="card">
+			<div class="card-label">Boston</div>
+			<div class="clock-value" id="tBO">—</div>
+			<div class="clock-date"  id="dBO"></div>
+			<div class="clock-tz">America / New_York</div>
+		</div>
+
+		<!-- Bengaluru ─────────────────────────────── -->
+		<div class="card">
+			<div class="card-label">Bengaluru</div>
+			<div class="clock-value" id="tBE">—</div>
+			<div class="clock-date"  id="dBE"></div>
+			<div class="clock-tz">Asia / Kolkata</div>
+		</div>
+
+	</div>
+
+	<script>
+	// ── Clocks ──────────────────────────────────────────────────────────────
+	const CLOCKS = [
+		{ tz: 'America/Los_Angeles', timeId: 'tLA', dateId: 'dLA' },
+		{ tz: 'America/New_York',    timeId: 'tBO', dateId: 'dBO' },
+		{ tz: 'Asia/Kolkata',        timeId: 'tBE', dateId: 'dBE' },
+	];
+
+	const timeFmt = tz => new Intl.DateTimeFormat('en-US', {
+		timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit',
+	});
+	const dateFmt = tz => new Intl.DateTimeFormat('en-US', {
+		timeZone: tz, weekday: 'short', month: 'short', day: 'numeric',
+	});
+
+	// Pre-build formatters once
+	const fmts = CLOCKS.map(c => ({ ...c, tf: timeFmt(c.tz), df: dateFmt(c.tz) }));
+
+	function tickClocks() {
+		const now = new Date();
+		for (const { timeId, dateId, tf, df } of fmts) {
+			document.getElementById(timeId).textContent = tf.format(now);
+			document.getElementById(dateId).textContent = df.format(now);
+		}
+	}
+	tickClocks();
+	setInterval(tickClocks, 1000);
+
+	// ── Health API ───────────────────────────────────────────────────────────
+	function fmtUptime(sec) {
+		const d = Math.floor(sec / 86400);
+		const h = Math.floor((sec % 86400) / 3600);
+		const m = Math.floor((sec % 3600) / 60);
+		const parts = [];
+		if (d) parts.push(`${d}d`);
+		if (h) parts.push(`${h}h`);
+		parts.push(`${m}m`);
+		return parts.join(' ');
+	}
+
+	async function checkHealth() {
+		const dot    = document.getElementById('dot');
+		const text   = document.getElementById('statusText');
+		const meta   = document.getElementById('statusMeta');
+		const latEl  = document.getElementById('latVal');
+
+		try {
+			const t0  = performance.now();
+			const res = await fetch('/healthcheck/api/status');
+			const ms  = performance.now() - t0;
+
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			const data = await res.json();
+
+			// Status
+			dot.className       = 'status-dot ok';
+			text.textContent    = '✓  Caddy is functional';
+			meta.textContent    = `API responded HTTP ${res.status} · refreshes every 10 s`;
+
+			// Latency
+			const msRounded = ms.toFixed(1);
+			latEl.textContent = `${msRounded} ms`;
+			latEl.className   = 'card-value ' +
+				(ms < 20 ? 'good' : ms < 100 ? 'warn' : 'bad');
+
+			// Uptime
+			const uptSec = data.uptime_seconds;
+			document.getElementById('uptimeVal').textContent = fmtUptime(uptSec);
+			document.getElementById('uptimeSub').textContent =
+				`${(uptSec / 3600).toFixed(1)} hours total`;
+
+		} catch (err) {
+			dot.className       = 'status-dot error';
+			text.textContent    = '✗  API unreachable';
+			meta.textContent    = err.message;
+			latEl.textContent   = 'error';
+			latEl.className     = 'card-value bad';
+			document.getElementById('uptimeVal').textContent = '—';
+			document.getElementById('uptimeSub').textContent = 'API offline';
+		}
+	}
+
+	checkHealth();
+	setInterval(checkHealth, 10000);
+	</script>
+</body>
+</html>

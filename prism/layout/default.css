@@ -1,0 +1,92 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Prism Layout: Default (fixed left sidebar / scrollable main content)
+   ───────────────────────────────────────────────────────────────────────────
+   This file controls the structural skeleton of Prism — where panels live,
+   how wide they are, and how they respond to the viewport.
+   All visual styling (colors, fonts) comes from the active theme file.
+
+   To create a new layout, copy this file, restructure as needed, and update
+   the <link id="prism-layout"> tag in index.html to point to your new file.
+
+   Example team layouts:
+     layout/wide-sidebar.css — expanded sidebar with labels always visible
+     layout/top-nav.css      — horizontal navigation instead of sidebar
+     layout/dense.css        — compact spacing for information-dense workflows
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Base reset & document root ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; font-family: var(--font); color: var(--text-primary); }
+body { display: flex; background: var(--bg-content); }
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+#sidebar {
+  width: var(--sidebar-w); flex-shrink: 0;
+  background: var(--bg-sidebar);
+  display: flex; flex-direction: column;
+  height: 100vh; position: sticky; top: 0;
+  padding: 0 0 16px 0; overflow-y: auto;
+}
+.sidebar-logo {
+  padding: 22px 20px 16px;
+  border-bottom: 1px solid var(--border-dark);
+  margin-bottom: 8px;
+}
+.sidebar-logo h1 { color: #fff; font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
+.sidebar-logo p  { color: var(--text-sidebar-muted); font-size: 11px; margin-top: 2px; }
+.sidebar-section { padding: 6px 12px 2px; }
+.sidebar-section-label {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+  color: var(--text-sidebar-muted); text-transform: uppercase; padding: 0 8px;
+  margin-bottom: 2px;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 12px; border-radius: 6px; cursor: pointer;
+  color: var(--text-sidebar); font-size: 13.5px; font-weight: 500;
+  transition: background 0.12s, color 0.12s; user-select: none;
+}
+.nav-item:hover  { background: rgba(255,255,255,0.06); color: #fff; }
+.nav-item.active { background: rgba(91,110,245,0.18); color: #fff; }
+.nav-item .icon  { font-size: 15px; width: 18px; text-align: center; flex-shrink: 0; }
+.nav-item .badge {
+  margin-left: auto; background: var(--accent); color: #fff;
+  font-size: 10px; font-weight: 700; border-radius: 10px;
+  padding: 1px 6px; min-width: 18px; text-align: center;
+}
+.nav-item .badge.warn { background: #f59e0b; }
+.sidebar-divider { height: 1px; background: var(--border-dark); margin: 8px 12px; }
+
+/* ── Main area ───────────────────────────────────────────────────────────── */
+#main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.topbar {
+  background: var(--bg-card); border-bottom: 1px solid var(--border);
+  padding: 14px 28px; display: flex; align-items: center; gap: 12px;
+  position: sticky; top: 0; z-index: 10;
+}
+.topbar h2 { font-size: 18px; font-weight: 700; flex: 1; }
+.topbar-actions { display: flex; gap: 8px; }
+.content-area { padding: 28px; flex: 1; overflow-y: auto; }
+
+/* ── Split panel (tree + content viewer) ────────────────────────────────── */
+.split-layout { display: flex; gap: 20px; align-items: flex-start; }
+.tree-panel {
+  width: 230px; flex-shrink: 0;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px; max-height: calc(100vh - 120px);
+  overflow-y: auto; position: sticky; top: 80px;
+}
+.tree-panel h3 {
+  font-size: 12px; color: var(--text-secondary); padding: 6px 8px 8px;
+  font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
+}
+.view-panel { flex: 1; min-width: 0; }
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  :root { --sidebar-w: 58px; }
+  .sidebar-logo p, .nav-item span, .sidebar-section-label, .nav-item .badge { display: none; }
+  .sidebar-logo h1 { font-size: 13px; }
+  .nav-item { justify-content: center; padding: 10px; }
+  .nav-item .icon { width: auto; }
+}

@@ -1,0 +1,28 @@
+# ── Binaries & build artifacts ──────────────────────────────
+/caddy
+/caddy.exe
+*.tar.gz
+
+# ── Logs & runtime output ───────────────────────────────────
+logs/
+*.log
+api-out.log
+api-err.log
+healthcheck.out.log
+prism.out.log
+
+# ── Caddy runtime state ─────────────────────────────────────
+autosave.json
+
+# ── Editor / OS cruft ───────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ── Playwright / debug residue ──────────────────────────────
+.playwright-mcp/
+
+# ── Local secrets ───────────────────────────────────────────
+.env
+*.credentials

@@ -1,0 +1,14 @@
+# Prism brain — git sync exclusions
+#
+# These paths contain local-only or sensitive content and must
+# never be pushed to the shared org repository.
+
+# ── Unprocessed queue ──────────────────────────────────────
+# Raw artifacts land here before they are reviewed and promoted.
+# Unprocessed files are local-only working state.
+ingestion/unprocessed/
+
+# ── Private files ──────────────────────────────────────────
+# Any file whose name ends in -private.md was marked Private at
+# ingest time. Keep them off the shared repo unconditionally.
+**/*-private.md

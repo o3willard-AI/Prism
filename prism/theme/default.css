@@ -1,0 +1,54 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Prism Theme: Default (dark sidebar / light content)
+   ───────────────────────────────────────────────────────────────────────────
+   This file defines ALL visual design tokens for Prism.
+   Every component and layout rule references these variables via var(--name).
+   To create a new theme, copy this file, change the values, and update the
+   <link id="prism-theme"> tag in index.html to point to your new file.
+
+   Example team themes:
+     theme/light.css         — fully light mode
+     theme/brand-acme.css    — Acme Corp brand colors
+     theme/high-contrast.css — accessibility-focused
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Structural ─────────────────────────────────────────── */
+  --sidebar-w: 228px;
+
+  /* ── Backgrounds ────────────────────────────────────────── */
+  --bg-sidebar:  #0f1117;
+  --bg-content:  #f9fafb;
+  --bg-card:     #ffffff;
+  --bg-editor:   #1e2130;
+
+  /* ── Accent (primary interactive color) ─────────────────── */
+  --accent:       #5b6ef5;
+  --accent-hover: #4a5ce8;
+
+  /* ── Text ───────────────────────────────────────────────── */
+  --text-primary:       #111827;
+  --text-secondary:     #6b7280;
+  --text-sidebar:       #c9cdd6;
+  --text-sidebar-muted: #6b7280;
+
+  /* ── Borders ─────────────────────────────────────────────── */
+  --border:      #e5e7eb;
+  --border-dark: #2a2d3e;
+
+  /* ── Status colors ───────────────────────────────────────── */
+  --status-candidate: #6b7280;
+  --status-proposed:  #3b82f6;
+  --status-validated: #10b981;
+  --status-demoted:   #f59e0b;
+  --status-archived:  #9ca3af;
+  --status-pending:   #f59e0b;
+  --status-confirmed: #10b981;
+  --status-green:     #10b981;
+  --status-yellow:    #f59e0b;
+  --status-red:       #ef4444;
+
+  /* ── Typography ──────────────────────────────────────────── */
+  --font:      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+}
