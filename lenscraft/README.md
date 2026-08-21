@@ -9,6 +9,7 @@ not yet product surface.
 ```
 00-lens-anatomy.md   What a lens IS — distilled from the existing eight
                      skills + three workflows. The machine's target shape.
-01-grind-loop.md     The co-creation dialogue the machine must run.
-                     (next artifact — not yet written)
+01-grind-loop.md     The co-creation dialogue the machine must run:
+                     broad-batch questioning, first-principles descent,
+                     real-light testing, harvest for generalizability.
 ```
