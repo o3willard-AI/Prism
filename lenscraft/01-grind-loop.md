@@ -151,11 +151,19 @@ files, with frontmatter declaring its provenance:
 **Created:** <date> · **Co-creators:** human + Prism lens-grinder
 **Fundamental outcomes:** <the testable sentences from Phase 1>
 **Tested against:** <sample used in Phase 4>
+**Minimum agent:** L3 · ~30B parameters
+**Rated by:** <model> · <date>
+**Rating basis:** <hardest cognitive move, one sentence>
 ```
 
 The fundamental outcomes stay in the file permanently — they are the
 lens's acceptance criteria for every future refraction, and the measure
-by which future regrinds are judged.
+by which future regrinds are judged. The **Minimum agent** rating is the
+intelligence requirement for running the lens (see
+`02-intelligence-rating.md`): the library cannot assume a future runner
+is as capable as the co-creating agent, so the rating is stamped at
+shelve time — based on what the Phase 4 test light actually demanded —
+and is revisable on field evidence via harvest notes.
 
 ### Phase 6 — Harvest (generalizability)
 
