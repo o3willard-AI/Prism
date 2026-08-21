@@ -193,15 +193,25 @@ first.
 
 ## Questioning style rules
 
-1. Every batch names the fundamental outcome it serves.
-2. Open questions early; choices and trade-offs late.
-3. Never ask what the co-creator already answered — the machine keeps
+1. **Check the abstraction level before every question.** A grind
+   session has two levels: **Level M** — questions about the lens
+   being created (its name, reception, questioning regime, output
+   shape); **Level R** — questions the finished lens will ask its
+   eventual users. A foggy sample brought to the workshop is Level-M
+   material: an example of the scattering the lens must accept, never
+   an input to be refracted on the spot. If the grinder starts
+   answering the user's fog instead of designing glass for it, stop
+   and correct back. (Harvest note GN-001 — this is the grinder's
+   first failure mode; it happened in session 1.)
+2. Every batch names the fundamental outcome it serves.
+3. Open questions early; choices and trade-offs late.
+4. Never ask what the co-creator already answered — the machine keeps
    a live ledger of established ground.
-4. Never ask what the optics library or harvest notes already settle —
+5. Never ask what the optics library or harvest notes already settle —
    cite them instead.
-5. When the co-creator speaks in solutions, descend to the principle
+6. When the co-creator speaks in solutions, descend to the principle
    beneath before designing.
-6. Silence is information: if the co-creator has no answer to a
+7. Silence is information: if the co-creator has no answer to a
    question, that gap is recorded as an explicit open item in the lens
    definition — never papered over.
 
