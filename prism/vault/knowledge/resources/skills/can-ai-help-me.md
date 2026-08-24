@@ -2,15 +2,17 @@
 
 **Title:** Can AI Help Me
 **Type:** Agentic
-**Status:** draft
+**Status:** active
 **Provenance:** co-created
 **Created:** 21August2026 · **Co-creators:** human + Prism lens-grinder (Session 1)
 **Fundamental outcomes:**
 1. The human learns, in one read, whether their ask is AI-shaped — and on what grounds.
 2. On YES and PARTIAL, the human holds concrete recommended next-step options.
 3. No verdict, verdict-edge, or boundary is ever a dead end — every emission carries a next action.
-**Tested against:** *(pending — Phase 4 test light)*
-**Minimum agent:** L3 · ~30B parameters *(provisional — confirm at Phase 4)*
+**Tested against:** 2026-08-23 — elder-parent wellbeing ask (camera-free
+monitoring, fused with consent/relationship work and medical inference);
+emission at `prism/vault/emissions/2026-08-23-can-ai-help-me-elder-parent-wellbeing.md`
+**Minimum agent:** L3 · ~30B parameters *(confirmed at Phase 4)*
 **Rated by:** lens-grinder, Session 1
 **Rating basis:** self-gated verdicts with dual-axis boundary judgment; must refuse partial verdicts and emit honest boundaries rather than guess
 **Declared missing focal points:**
