@@ -353,6 +353,34 @@
     display: flex; align-items: center; gap: 6px;
     font-size: 13px; color: var(--text-secondary); font-style: italic;
   }
+  /* ── Front door: the refraction desk (F7 redesign) ───────────────────── */
+  .desk-textarea { width: 100%; box-sizing: border-box; min-height: 140px;
+    resize: vertical; padding: 16px; border: 1px solid var(--border);
+    border-radius: 10px; font-family: var(--font); font-size: 15px;
+    line-height: 1.6; background: var(--bg-secondary); color: var(--text-primary); }
+  .desk-textarea:focus { outline: none; border-color: var(--accent); }
+  .desk-drop { border: 1px dashed var(--border); border-radius: 10px;
+    padding: 14px; text-align: center; font-size: 13px; cursor: pointer;
+    color: var(--text-secondary); transition: border-color 0.15s, background 0.15s;
+    margin-top: 10px; }
+  .desk-drop:hover, .desk-drop.drag-over { border-color: var(--accent); background: #e8edff; }
+  .desk-doors { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px;
+    align-items: center; }
+  .desk-door { padding: 9px 16px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg-secondary); font-family: var(--font); font-size: 13.5px;
+    cursor: pointer; color: var(--text-primary); display: inline-flex;
+    align-items: center; gap: 7px; transition: border-color 0.15s, background 0.15s; }
+  .desk-door:hover { border-color: var(--accent); background: var(--bg-tertiary); }
+  .desk-door-primary { background: var(--accent); border-color: var(--accent);
+    color: #fff; font-weight: 600; }
+  .desk-door-primary:hover { filter: brightness(1.08); background: var(--accent); }
+  .desk-door:disabled { opacity: 0.5; cursor: wait; }
+  .desk-continue-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .desk-continue-row:last-child { border-bottom: none; }
+  .desk-continue-row:hover { background: var(--bg-tertiary); border-radius: 8px; }
+  .desk-pause-tag { font-size: 11px; color: var(--accent); border: 1px solid var(--accent);
+    border-radius: 10px; padding: 1px 8px; flex-shrink: 0; }
   .wf-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-secondary);
     animation: wf-bounce 1.2s ease-in-out infinite; }
   .wf-dot:nth-child(2) { animation-delay: 0.2s; }
@@ -372,7 +400,7 @@
   <div class="sidebar-section">
     <div class="sidebar-section-label">Core</div>
     <div class="nav-item active" data-view="dashboard" onclick="nav(this)">
-      <span class="icon">⚡</span><span>Dashboard</span>
+      <span class="icon">◈</span><span>Front Door</span>
     </div>
     <div class="nav-item" data-view="ingest" onclick="nav(this)">
       <span class="icon">📥</span><span>Ingest</span>
@@ -419,7 +447,7 @@
 <!-- ── Main ─────────────────────────────────────────────────────────────── -->
 <div id="main">
   <div class="topbar">
-    <h2 id="topbar-title">Dashboard</h2>
+    <h2 id="topbar-title">Front Door</h2>
     <div class="topbar-actions" id="topbar-actions"></div>
   </div>
   <div class="content-area" id="content-area">
@@ -468,7 +496,7 @@ function toast(msg, isError = false) {
 // ── Navigation ─────────────────────────────────────────────────────────────
 
 const VIEW_TITLES = {
-  dashboard: 'Dashboard', ingest: 'Ingest Artifact',
+  dashboard: 'Front Door', ingest: 'Ingest Artifact',
   knowledge: 'Knowledge Base', workflows: 'Workflows', hypotheses: 'Hypotheses',
   requirements: 'Requirements',
   rationalizations: 'Rationalizations',
@@ -506,97 +534,181 @@ async function renderView(view) {
   }
 }
 
-// ── Dashboard ──────────────────────────────────────────────────────────────
+// ── Front Door: the Refraction Desk (F7 redesign) ─────────────────────────
+// One input surface — "bring fog, get focus." Not a status board.
+
+let _desk = { content: '', type: 'unordered', lens: null, fileLoaded: null };
 
 async function renderDashboard(area) {
-  const s = await apiGet('/status');
+  await renderDesk(area);
+}
+
+async function renderDesk(area) {
+  // Badge counts for the lens doors (from status)
+  let s = { dwell: {} };
+  try { s = await apiGet('/status'); } catch (e) {}
   _status = s;
   updateBadges(s);
 
+  // Paused sessions to resume (machine prepares; human steers — GN-009)
+  let pausedRows = '';
+  try {
+    const lenses = ['requirements', 'hypotheses', 'rationalizations'];
+    const pauseChecks = await Promise.all(lenses.map(async l => {
+      const files = await apiGet('/list?path=' + l);
+      return (files || []).filter(f => f.type === 'file' && f.name.endsWith('-pause.md'));
+    }));
+    const pauses = pauseChecks.flat();
+    if (pauses.length) {
+      pausedRows = `
+        <div class="card" style="margin-top:20px">
+          <div class="section-header" style="margin-bottom:10px">
+            <h3 style="font-size:14px">Paused sessions</h3>
+            <span style="font-size:12px;color:var(--text-secondary)">pick up where you left off</span>
+          </div>
+          ${pauses.map(p => {
+            const lensKey = p.path.split('/')[0];
+            const lensPath = p.path.replace(/-pause\.md$/, '.md');
+            const label = lensPath.split('/').pop().replace('.md','').replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/-/g,' ');
+            return `<div class="desk-continue-row">
+              <span class="desk-pause-tag">⏸ paused</span>
+              <span style="flex:1;font-size:13.5px;font-weight:600">${escHtml(label)}</span>
+              <button class="desk-door" onclick="continueWorkflow('${escHtml(lensPath)}','${lensKey}','desk-content')">Resume →</button>
+            </div>`;
+          }).join('')}
+        </div>`;
+    }
+  } catch (e) { /* no paused sessions — that's fine */ }
+
+  const lensDoors = [
+    { key: 'requirements',     icon: '📋', label: 'Requirement',     hint: 'capability → developer-ready PRD' },
+    { key: 'hypotheses',       icon: '🔬', label: 'Hypothesis',      hint: 'a belief worth testing' },
+    { key: 'rationalizations', icon: '🧩', label: 'Rationalization', hint: 'post-hoc account, structured' },
+  ].map(d => `
+    <button class="desk-door" data-lens="${d.key}" onclick="deskLensDoor('${d.key}')"
+      style="flex-direction:column;align-items:flex-start;gap:2px;min-width:170px;text-align:left">
+      <span style="font-weight:600">${d.icon} ${d.label}</span>
+      <span style="font-size:11.5px;color:var(--text-secondary);font-weight:400">${d.hint}</span>
+    </button>`).join('');
+
   area.innerHTML = `
-    <div class="stat-grid" style="margin-bottom:24px">
-      <div class="stat-card">
-        <div class="stat-label">Requirements in Review</div>
-        <div class="stat-value" style="color:${(s.requirement_counts?.review||0)>0?'var(--status-proposed)':'inherit'}">${s.requirement_counts?.review||0}</div>
-        <div class="stat-sub">${s.requirement_counts?.draft||0} draft · ${s.requirement_counts?.approved||0} approved</div>
+    <div style="max-width:720px">
+      <div style="margin-bottom:18px">
+        <h2 style="font-size:20px;font-weight:700;margin-bottom:4px">Bring fog. Get focus.</h2>
+        <p style="font-size:13.5px;color:var(--text-secondary);margin:0">
+          Drop in raw thought — a brain dump, a transcript, a half-formed idea.
+          Prism refracts it into focused, agent-ready context.
+        </p>
       </div>
-      <div class="stat-card">
-        <div class="stat-label">Ingested Artifacts</div>
-        <div class="stat-value">${s.ingestion_count}</div>
-        <div class="stat-sub">interviews · meetings · market · adhoc</div>
-      </div>
-    </div>
 
-    <div style="display:grid;grid-template-columns:1fr;gap:16px">
       <div class="card">
-        <div class="section-header" style="margin-bottom:16px">
-          <h3>Prism Dwell</h3>
-          <span style="font-size:12px;color:var(--text-secondary)">Days un-emitted per Thought Lens — light → deep red = new → lingering</span>
+        <textarea class="desk-textarea" id="desk-content"
+          placeholder="Paste or type the raw thought here. Fog included — that's the point…"
+          oninput="_desk.content = this.value">${escHtml(_desk.content)}</textarea>
+
+        <div class="desk-drop" id="desk-drop" onclick="document.getElementById('desk-file').click()">
+          <input type="file" id="desk-file" accept=".md,.txt,.csv,.json,.rtf"
+            style="display:none" onchange="deskFileSelect(this.files)">
+          <span id="desk-drop-label">📂 or drop / browse a file instead</span>
         </div>
-        ${renderDwellBars(s.dwell || {})}
-        ${renderDwellLegend()}
+
+        <details style="margin-top:14px">
+          <summary class="form-label" style="font-size:12px;cursor:pointer">Input shape (optional — defaults to brain dump; the lens will confirm)</summary>
+          <select class="form-select" id="desk-type" onchange="_desk.type = this.value" style="max-width:320px;margin-top:8px">
+            <option value="unordered">📝 Unordered text / brain dump</option>
+            <option value="formatted">📄 Formatted or ordered text</option>
+            <option value="dictation">🎤 Dictation / transcript</option>
+            <option value="media">🎬 Media</option>
+            <option value="code">💻 Code</option>
+          </select>
+        </details>
+
+        <div class="form-label" style="margin-top:18px;margin-bottom:8px">Route it through a lens:</div>
+        <div class="desk-doors" id="desk-doors">${lensDoors}</div>
+        <div id="desk-error" style="color:#dc2626;font-size:13px;margin-top:10px"></div>
       </div>
-    </div>
-  `;
-}
 
-const DWELL_COLORS = [
-  '#fff1f2','#ffe4e6','#fecdd3','#fda4af',   // 0–8 d
-  '#fb7185','#f43f5e','#e11d48','#be123c',   // 8–16 d
-  '#9f1239','#881337','#7c1130','#6e0e28',   // 16–24 d
-  '#620a21','#56071a','#4a0414','#3d020e',   // 24–30+ d
-];
-const DWELL_BUCKET_LABELS = [
-  '0–2d','2–4d','4–6d','6–8d','8–10d','10–12d','12–14d','14–16d',
-  '16–18d','18–20d','20–22d','22–24d','24–26d','26–28d','28–30d','30+d',
-];
-const DWELL_LENS_INFO = [
-  { key:'requirements',    icon:'📋', label:'Requirements' },
-  { key:'hypotheses',      icon:'🔬', label:'Hypotheses' },
-  { key:'rationalizations',icon:'🧩', label:'Rationalizations' },
-];
-const DWELL_UNIT = 14; // px per item
-
-function renderDwellBars(dwell) {
-  return DWELL_LENS_INFO.map(({ key, icon, label }) => {
-    const counts = dwell[key] || Array(16).fill(0);
-    const total  = counts.reduce((a, b) => a + b, 0);
-
-    const segs = counts.map((n, i) => {
-      if (n === 0) return '';
-      const w       = n * DWELL_UNIT;
-      const bg      = DWELL_COLORS[i];
-      const txtClr  = i < 4 ? '#881337' : '#fff';
-      const tip     = `${DWELL_BUCKET_LABELS[i]}: ${n} item${n !== 1 ? 's' : ''}`;
-      return `<div title="${tip}" style="display:inline-flex;flex-direction:column;align-items:center;width:${w}px;flex-shrink:0">
-        <div style="font-size:11px;font-weight:700;color:${bg};line-height:1.3;text-align:center;width:100%">${n}</div>
-        <div style="width:100%;height:20px;background:${bg};border-right:1px solid rgba(255,255,255,0.2)"></div>
-      </div>`;
-    }).join('');
-
-    return `<div style="margin-bottom:14px">
-      <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">
-        ${icon} ${label}
-        ${total > 0 ? `<span style="font-weight:400;margin-left:6px">${total} active</span>` : ''}
-      </div>
-      ${total === 0
-        ? `<div style="font-size:12px;color:var(--text-secondary);font-style:italic;padding:3px 0 3px 2px">✓ Clear</div>`
-        : `<div style="display:flex;align-items:flex-end;overflow-x:auto">${segs}</div>`}
+      ${pausedRows}
     </div>`;
-  }).join('');
+
+  const zone = document.getElementById('desk-drop');
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('drag-over'); deskFileSelect(e.dataTransfer.files);
+  });
 }
 
-function renderDwellLegend() {
-  const blocks = DWELL_COLORS.map((c, i) =>
-    `<div title="${DWELL_BUCKET_LABELS[i]}" style="flex:1;min-width:0;height:8px;background:${c}"></div>`
-  ).join('');
-  return `<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:10px">
-    <div style="display:flex;gap:0;border-radius:4px;overflow:hidden;margin-bottom:4px">${blocks}</div>
-    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-secondary)">
-      <span>0 days (new)</span><span>30+ days (lingering)</span>
-    </div>
-  </div>`;
+function deskFileSelect(files) {
+  if (!files?.length) return;
+  const file = files[0];
+  const reader = new FileReader();
+  reader.onload = e => {
+    _desk.content = e.target.result;
+    _desk.fileLoaded = file.name;
+    document.getElementById('desk-content').value = _desk.content;
+    const ext = file.name.toLowerCase().split('.').pop();
+    if (['js','ts','py','go','rb','java','css','html'].includes(ext)) _desk.type = 'code';
+    document.getElementById('desk-type').value = _desk.type;
+    document.getElementById('desk-drop-label').textContent = '✅ ' + file.name + ' loaded';
+  };
+  reader.onerror = () => toast('Could not read file.', true);
+  reader.readAsText(file);
 }
+
+function deskLensDoor(lensKey) {
+  // A door is an action: pick the lens, go (one click, no start button).
+  _desk.lens = lensKey;
+  deskSubmit();
+}
+
+async function deskSubmit() {
+  const cfg = LENS_CONFIGS[_desk.lens];
+  const errEl = document.getElementById('desk-error');
+  const content = _desk.content.trim();
+  errEl.textContent = '';
+  if (!content) { errEl.textContent = 'Add the raw thought first — the lens needs light to refract.'; return; }
+
+  const lensKey = _desk.lens;
+  const ingType = _desk.type;
+
+  // 1. Ingest the fog into the unprocessed queue
+  let ing;
+  try {
+    ing = await apiPost('/ingest', {
+      type: ingType,
+      title: autoName(cfg.seedWord),
+      content,
+      is_private: false,
+    });
+  } catch (e) { errEl.textContent = e.message; return; }
+
+  // 2. Create the lens item from the ingested artifact
+  let r;
+  try {
+    r = await apiPost(cfg.endpoint, { title: autoName(cfg.seedWord), artifact_path: ing.path });
+  } catch (e) { errEl.textContent = e.message; return; }
+  if (!r.ok) { errEl.textContent = r.message || 'Could not create the lens item.'; return; }
+
+  // 3. Clear the desk and launch straight into the workflow chat (no wizard)
+  const lensPath = r.path;
+  const lensTitle = lensPath.split('/').pop().replace('.md','').replace(/^\d{4}-\d{2}-\d{2}-/,'');
+  _desk = { content: '', type: 'unordered', lens: null, fileLoaded: null };
+  toast('✅ ' + cfg.noun + ' created');
+  renderWorkflowChat(document.getElementById('content-area'), {
+    title:         cfg.noun + ' Workflow',
+    workflowId:    cfg.defaultWorkflow || 'ad-hoc',
+    lensKey:       lensKey,
+    artifactPath:  lensPath,
+    gibberishPath: ing.path,
+    artifactTitle: lensTitle,
+    subAssets:     [],
+    agentGreeting: 'Your ' + cfg.noun.toLowerCase() + ' is created at `' + lensPath + '`. Loading the seed…',
+  });
+}
+
+// ── (Legacy dwell-bar dashboard removed in the F7 redesign — the front door
+//    is the refraction desk now. See lenscraft/04-ui-friction-audit.md.) ──
 
 function updateBadges(s) {
   const dwellTotal = (key) => (s.dwell?.[key] || []).reduce((a, b) => a + b, 0);
