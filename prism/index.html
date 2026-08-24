@@ -1154,6 +1154,11 @@ function confirmDeleteThought(relPath, lensKey, contentId) {
 async function deleteThought(relPath, lensKey) {
   try {
     const data = await apiFetch(`/file?path=${encodeURIComponent(relPath)}`, { method: 'DELETE' });
+    // F3: session sidecars die with their lens — no ghost paused entries.
+    for (const suffix of ['-pause.md', '-chat.md', '-session.json']) {
+      const sidecar = relPath.replace(/\.md$/, suffix);
+      await apiFetch(`/file?path=${encodeURIComponent(sidecar)}`, { method: 'DELETE' }).catch(() => {});
+    }
     toast('🗑 Thought deleted');
     const cfg = LENS_CONFIGS[lensKey] || {};
     if (cfg.navKey) await renderView(cfg.navKey);
@@ -2322,67 +2327,8 @@ function _chatAgentSay(text, html) {
 // ── Requirements Default Workflow Runner ────────────────────────────────────
 
 async function _wfReqInit() {
-  // Check for a pause checkpoint first
-  const pausePath = _chatPausePath();
-  if (pausePath) {
-    try {
-      const { content: pauseContent } = await apiGet(`/file?path=${encodeURIComponent(pausePath)}`);
-      const pauseMeta = parseMarkdownMeta(pauseContent);
-      // Restore step from pause document
-      if (pauseMeta.step) _chat.wfStep = pauseMeta.step;
-
-      // Load the session log if it exists
-      const chatPath = _chatSavePath();
-      if (chatPath) {
-        try {
-          const { content: chatLog } = await apiGet(`/file?path=${encodeURIComponent(chatPath)}`);
-          // Restore messages from session log (simplified: just show the log as context)
-          _chat.messages = [{
-            role: 'agent',
-            text: `🔄 **Resuming from saved checkpoint** (paused at step: \`${_chat.wfStep}\`)\n\nYour previous session has been restored. The full session log is below — scroll up to review, then continue from where you left off.\n\nPrevious pause note:\n> ${(pauseContent.match(/## How to Resume\n\n[\s\S]*?\n\n---/)?.[0]?.replace(/## How to Resume\n\n/,'').replace(/\n\n---/,'') || 'See pause checkpoint file.')}`,
-            attachments: [],
-          }];
-        } catch(_) { /* no chat log — that's fine */ }
-      }
-
-      // Now resume the right step
-      if (_chat.wfStep === 'awaiting-prd-gate') {
-        // Re-load artifact for the PRD Gate prompt
-        try {
-          const { content } = await apiGet(`/file?path=${encodeURIComponent(_chat.artifactPath)}`);
-          _chat.artifactContent = content;
-          _chat.artifactMeta    = parseMarkdownMeta(content);
-        } catch(_) {}
-        const name = _chat.artifactTitle || _chat.artifactPath.split('/').pop().replace('.md','');
-        _chat.messages.push({
-          role: 'agent',
-          text: `**Resuming at: PRD Gate**\n\nHere is the PRD Gate prompt. Run it through your AI agent and paste the output back here.`,
-          attachments: [],
-          codeBlock: _wfReqPrdGatePrompt(_chat.artifactPath, name, _chat.artifactContent || ''),
-        });
-      } else if (_chat.wfStep === 'awaiting-intent-synth') {
-        try {
-          const { content } = await apiGet(`/file?path=${encodeURIComponent(_chat.artifactPath)}`);
-          _chat.artifactContent = content;
-          _chat.artifactMeta    = parseMarkdownMeta(content);
-        } catch(_) {}
-        const name = _chat.artifactTitle || _chat.artifactPath.split('/').pop().replace('.md','');
-        _chat.messages.push({
-          role: 'agent',
-          text: `**Resuming at: Intent Synthesizer**\n\nHere is the Intent Synthesizer prompt. Run it through your AI agent and paste the output back here.`,
-          attachments: [],
-          codeBlock: _wfReqIntentSynthPrompt(_chat.artifactPath, 'unordered', _chat.artifactContent || ''),
-        });
-      } else if (_chat.wfStep === 'post-processing') {
-        _chat.messages.push({ role: 'agent', text: _wfReqPostProcessMsg(), attachments: [] });
-      } else {
-        _chat.messages.push({ role: 'agent', text: `Resumed. Current step: \`${_chat.wfStep}\`. Send a message to continue.`, attachments: [] });
-      }
-      const t = document.getElementById('wf-thread');
-      if (t) { t.innerHTML = _chat.messages.map(_chatBubbleHtml).join(''); _chatScrollBottom(); }
-      return;
-    } catch(_) { /* no pause file — start fresh */ }
-  }
+  // F3: shared resume — replays the real session and restores the paused step
+  if (await _wfResumeFromPause()) return;
 
   // Load artifact content fresh
   try {
@@ -2529,6 +2475,9 @@ function _wfReqIntentSynthPrompt(path, type, content) {
 
 async function _wfRatInit() {
   console.log('[_wfRatInit] starting, artifactPath:', _chat.artifactPath, 'gibberishPath:', _chat.gibberishPath);
+  // F3: shared resume — rationalizations previously ignored the pause file
+  // entirely (every resume re-ran routing from scratch). Now it replays.
+  if (await _wfResumeFromPause()) return;
   try {
     // Load the lens file to get type metadata
     const { content: lensContent } = await apiGet(`/file?path=${encodeURIComponent(_chat.artifactPath)}`);
@@ -2646,20 +2595,8 @@ function _wfRatStructurePrompt(path, name, content) {
 // Output: a hypothesis brief (Framework C) written into the lens file.
 
 async function _wfHypInit() {
-  // Pause checkpoint first (same pattern as the Requirements runner)
-  const pausePath = _chatPausePath();
-  if (pausePath) {
-    try {
-      const { content: pauseContent } = await apiGet(`/file?path=${encodeURIComponent(pausePath)}`);
-      const pauseMeta = parseMarkdownMeta(pauseContent);
-      if (pauseMeta.step) _chat.wfStep = pauseMeta.step;
-      if (_chat.wfStep === 'post-processing') {
-        _chat.messages.push({ role: 'agent', text: _wfHypPostProcessMsg(), attachments: [] });
-        _wfRerenderThread();
-        return;
-      }
-    } catch(_) { /* no pause file — start fresh */ }
-  }
+  // F3: shared resume (previously only post-processing was restored)
+  if (await _wfResumeFromPause()) return;
 
   try {
     const { content } = await apiGet(`/file?path=${encodeURIComponent(_chat.artifactPath)}`);
@@ -2932,6 +2869,142 @@ function _wfRerenderThread() {
 }
 
 
+// ── F3 — Resume fidelity ────────────────────────────────────────────────────
+// One resume path for all three workflow runners. Replay the real session
+// from the machine-readable sidecar (messages, prepared prompts, verdict
+// cards with live Accept/Re-run doors), restore the paused step, and hand
+// the human exactly the prompt their step needs. No more context blob.
+
+async function _wfResumeFromPause() {
+  const pausePath = _chatPausePath();
+  if (!pausePath) return false;
+
+  let pauseContent;
+  try {
+    ({ content: pauseContent } = await apiGet(`/file?path=${encodeURIComponent(pausePath)}`));
+  } catch (_) { return false; }   // no pause file — start fresh
+
+  const pauseMeta = parseMarkdownMeta(pauseContent);
+  if (pauseMeta.step) _chat.wfStep = pauseMeta.step;
+
+  // 1) Replay the real messages from the sidecar.
+  let replayed = false;
+  const sessPath = _chatSessionPath();
+  if (sessPath) {
+    try {
+      const { content: sessRaw } = await apiGet(`/file?path=${encodeURIComponent(sessPath)}`);
+      const sess = JSON.parse(sessRaw);
+      if (Array.isArray(sess.messages)) {
+        _chat.messages = sess.messages.map(m => {
+          const msg = {
+            role: m.role === 'agent' ? 'agent' : 'user',
+            text: m.text || '',
+            attachments: (m.attachments || []).map(a => ({ name: a.name })),
+          };
+          if (m.codeBlock) msg.codeBlock = m.codeBlock;
+          if (m.stageSavedPath) msg.stageSavedPath = m.stageSavedPath;
+          if (m.verify) msg.verify = m.verify;   // doors stay live unless done
+          return msg;
+        });
+        // Re-index verdict cards: msgIdx must point at the replayed positions.
+        _chat.messages.forEach((m, i) => {
+          if (m.verify && typeof m.verify.msgIdx === 'number') m.verify.msgIdx = i - 1;
+        });
+        replayed = true;
+      }
+    } catch (_) { /* sidecar missing or corrupt — fall back below */ }
+  }
+  if (!replayed) {
+    // Legacy session (pre-F3): no replayable state. Surface the pause note,
+    // then re-issue the step's prompt below — the human loses no forward
+    // motion, only the old scrollback.
+    const note = pauseContent.match(/## How to Resume\n\n[\s\S]*?\n\n---/)?.[0]
+      ?.replace(/## How to Resume\n\n/, '').replace(/\n\n---/, '') || '';
+    _chat.messages = [{
+      role: 'agent',
+      text: `🔄 **Resuming from saved checkpoint** (paused at step: \`${_chat.wfStep}\`)\n\nThis session was saved before replay support existed, so the old scrollback is available in the pause checkpoint file — the workflow itself picks up right here.\n\n${note ? '> ' + note : ''}`.trim(),
+      attachments: [],
+    }];
+  }
+
+  // 2) Make sure the artifact content is loaded — prompt re-issue and the
+  //    legacy fallback both need it.
+  if (!_chat.artifactContent && _chat.artifactPath) {
+    try {
+      const { content } = await apiGet(`/file?path=${encodeURIComponent(_chat.artifactPath)}`);
+      _chat.artifactContent = content;
+      _chat.artifactMeta    = parseMarkdownMeta(content);
+    } catch (_) {}
+  }
+
+  // 3) Step-specific resume message. For awaiting-* steps the skill prompt
+  //    is the thing in hand — replay it if the scrollback doesn't end with
+  //    one (covers legacy sessions and any session whose last message was
+  //    a user paste).
+  const step = _chat.wfStep;
+  const name = _chat.artifactTitle || (_chat.artifactPath || '').split('/').pop().replace('.md','');
+  const type = ((_chat.artifactMeta && _chat.artifactMeta.type) || 'unordered').toLowerCase();
+  // The scrollback already hands the human the next action when it ends with
+  // a prepared prompt OR a verdict card whose doors are still live (Accept /
+  // Re-run re-issue the prompt themselves — a duplicate would be noise).
+  const lastMsg = _chat.messages[_chat.messages.length - 1] || {};
+  const endsWithPrompt = !!lastMsg.codeBlock
+    || (!!lastMsg.verify && !lastMsg.verify.done);
+  const wf = _chat.workflowId;
+
+  let resumeMsg = null;   // {text, codeBlock?} or null = scrollback suffices
+  if (step === 'awaiting-prd-gate' && !endsWithPrompt) {
+    resumeMsg = {
+      text: '**Resuming at: PRD Gate**\n\nHere is the PRD Gate prompt. Run it through your AI agent and paste the output back here.',
+      codeBlock: _wfReqPrdGatePrompt(_chat.artifactPath, name, _chat.artifactContent || ''),
+    };
+  } else if (step === 'awaiting-intent-synth' && !endsWithPrompt) {
+    const prompt = wf === 'rationalizations-default'
+      ? _wfRatIntentSynthPrompt(_chat.artifactPath, type, _chat.artifactContent || '')
+      : _wfReqIntentSynthPrompt(_chat.artifactPath, type, _chat.artifactContent || '');
+    resumeMsg = {
+      text: '**Resuming at: Intent Synthesizer**\n\nHere is the Intent Synthesizer prompt. Paste the output back here.',
+      codeBlock: prompt,
+    };
+  } else if (step === 'awaiting-conv-synth' && !endsWithPrompt) {
+    resumeMsg = {
+      text: '**Resuming at: Conversation Synthesizer**\n\nHere is the Conv Synth prompt. Paste the output back here.',
+      codeBlock: _wfRatConvSynthPrompt(_chat.artifactPath, type, _chat.artifactContent || ''),
+    };
+  } else if (step === 'awaiting-structure' && !endsWithPrompt) {
+    resumeMsg = {
+      text: '**Resuming at: Structured Account**\n\nHere is the structure prompt. Paste the output back here.',
+      codeBlock: _wfRatStructurePrompt(_chat.artifactPath, name, _chat.artifactContent || ''),
+    };
+  } else if (step === 'awaiting-doc-synth' && !endsWithPrompt) {
+    resumeMsg = {
+      text: '**Resuming at: Document Synthesizer**\n\nHere is the Document Synthesizer prompt. Paste the output back here.',
+      codeBlock: _wfHypDocSynthPrompt(_chat.artifactPath, type, _chat.artifactContent || ''),
+    };
+  } else if (step === 'awaiting-clarification' && !endsWithPrompt) {
+    resumeMsg = {
+      text: '**Resuming at: Clarification Gate**\n\nHere is the Clarification Gate prompt. Paste the output back here.',
+      codeBlock: _wfHypGatePrompt(_chat.artifactPath, name, _chat.artifactContent || ''),
+    };
+  } else if (step === 'post-processing' && !endsWithPrompt) {
+    resumeMsg = { text: wf === 'rationalizations-default' ? _wfRatPostProcessMsg()
+                     : wf === 'hypotheses-default'         ? _wfHypPostProcessMsg()
+                     : _wfReqPostProcessMsg() };
+  } else if (step === 'inquiry' && !endsWithPrompt) {
+    resumeMsg = { text: 'The agent has questions (certainty below 95%). Answer them above — when you send your answers, Prism re-runs the skill with the enriched input.' };
+  } else if (!replayed) {
+    resumeMsg = { text: `Resumed. Current step: \`${step}\`. Send a message to continue.` };
+  }
+
+  if (resumeMsg) {
+    _chat.messages.push({ role: 'agent', text: resumeMsg.text, attachments: [], ...(resumeMsg.codeBlock ? { codeBlock: resumeMsg.codeBlock } : {}) });
+  }
+  _wfRerenderThread();
+  _chatScheduleSave();   // persist the resumed state immediately
+  return true;
+}
+
+
 
 
 
@@ -2946,6 +3019,32 @@ function _chatSavePath()  {
 function _chatPausePath() {
   if (!_chat.artifactPath) return null;
   return _chat.artifactPath.replace(/\.md$/, '-pause.md');
+}
+// F3: machine-readable session sidecar — replays the real messages
+// (code blocks, verdict cards, steering notes) instead of a text blob.
+function _chatSessionPath() {
+  if (!_chat.artifactPath) return null;
+  return _chat.artifactPath.replace(/\.md$/, '-session.json');
+}
+
+function _chatSerializeMessages() {
+  // Persist only what replay needs: role, text, prepared prompts, verdict
+  // cards (pending Accept/Re-run decisions survive a pause), staging state.
+  // Attachment payloads stay in the human-readable transcript, not here.
+  return _chat.messages.map(m => ({
+    role: m.role,
+    text: m.text || '',
+    codeBlock: m.codeBlock || null,
+    stageSavedPath: m.stageSavedPath || null,
+    verify: m.verify ? {
+      ok: m.verify.ok, shape: m.verify.shape, verdict: m.verify.verdict,
+      kind: m.verify.kind, kind_label: m.verify.kind_label,
+      hits: m.verify.hits, total: m.verify.total,
+      missing: m.verify.missing || [], advice: m.verify.advice || '',
+      msgIdx: m.verify.msgIdx, accepted: m.verify.accepted, done: m.verify.done,
+    } : null,
+    attachments: (m.attachments || []).map(a => ({ name: a.name })),
+  }));
 }
 
 function _chatScheduleSave() {
@@ -2971,7 +3070,7 @@ async function _chatDoSave() {
     ``,
     `## Session Log`,
     ``,
-    ..._chat.messages.map(m => {
+    ..._chat.messages.filter(m => !m.verify || m.text).map(m => {
       const who = m.role === 'agent' ? '### 🤖 Agent' : '### 👤 You';
       const body = (m.text || '').replace(/\r?\n/g, '\n');
       const attach = (m.attachments || []).map(a => `> 📎 ${a.name}`).join('\n');
@@ -2982,6 +3081,22 @@ async function _chatDoSave() {
 
   try {
     await apiPost('/file', { path: savePath, content: lines.join('\n') });
+    // F3: keep the machine-readable replay sidecar in lockstep so a resume
+    // at any moment can restore the real session, not a blob.
+    const sessPath = _chatSessionPath();
+    if (sessPath) {
+      try {
+        await apiPost('/file', {
+          path: sessPath,
+          content: JSON.stringify({
+            workflow: _chat.workflowId,
+            step: _chat.wfStep,
+            saved_at: now.toISOString(),
+            messages: _chatSerializeMessages(),
+          }, null, 2),
+        });
+      } catch (_) { /* sidecar is best-effort */ }
+    }
     const el = document.getElementById('wf-save-status');
     if (el) el.textContent = `Auto-saved ${stamp}`;
   } catch(e) {
@@ -3018,11 +3133,16 @@ async function wfPauseHere() {
 
   const nextStepGuide = {
     'awaiting-intent-synth': `Run the **Intent Synthesizer** skill prompt shown in the last agent message above. Paste the output into the chat and send.`,
+    'awaiting-conv-synth':   `Run the **Conversation Synthesizer** skill prompt shown above. Paste the output into the chat and send.`,
+    'awaiting-structure':    `Run the **structure prompt** shown above. Paste the output into the chat and send.`,
+    'awaiting-doc-synth':    `Run the **Document Synthesizer** skill prompt shown above. Paste the output into the chat and send.`,
+    'awaiting-clarification':`Run the **Clarification Gate** skill prompt shown above. Paste the output into the chat and send.`,
     'awaiting-prd-gate':     `Run the **PRD Gate** skill prompt shown in the last agent message above. Paste the output into the chat and send.`,
-    'post-processing':       `Choose one of the five post-processing options (A–E) presented in the last agent message.`,
-    'inquiry':               `Type or attach the additional context requested by the PRD Gate, then send it.`,
+    'post-processing':       `Choose one of the post-processing options presented in the last agent message.`,
+    'inquiry':               `Type or attach the additional context requested by the agent, then send it.`,
   };
-  const nextGuide = nextStepGuide[_chat.wfStep] || `Resume the workflow from the Requirements lens and click Continue Workflow.`;
+  const lensNoun = (LENS_CONFIGS[_chat.lensKey] || {}).noun || 'Lens';
+  const nextGuide = nextStepGuide[_chat.wfStep] || `Resume the workflow from the ${lensNoun} lens and click Continue Workflow.`;
 
   // Summarise completed steps
   const completedSteps = [];
@@ -3050,8 +3170,8 @@ async function wfPauseHere() {
     ``,
     `## Task at Hand`,
     ``,
-    `Processing the requirement **"${name}"** through the **${_chat.title}** workflow.`,
-    `The goal is to produce a developer-ready PRD from the Genesis artifact at \`${_chat.artifactPath}\`.`,
+    `Processing the ${lensNoun.toLowerCase()} **"${name}"** through the **${_chat.title}** workflow.`,
+    `The session artifact lives at \`${_chat.artifactPath}\`.`,
     ``,
     `---`,
     ``,
@@ -3065,7 +3185,7 @@ async function wfPauseHere() {
     ``,
     `## How to Resume`,
     ``,
-    `1. Open the **Requirements** lens from the left navigation.`,
+    `1. Open the **${lensNoun}** lens from the left navigation.`,
     `2. Click on **"${name}"** in the list.`,
     `3. Click **▶ Continue Workflow**.`,
     `4. ${nextGuide}`,
@@ -3086,10 +3206,18 @@ async function wfPauseHere() {
   ].join('\n');
 
   try {
-    // Save both the pause checkpoint and final chat transcript simultaneously
+    // Save the pause checkpoint, the human-readable transcript, and the
+    // machine-readable replay sidecar simultaneously (F3).
+    const sessPath = _chatSessionPath();
     await Promise.all([
       apiPost('/file', { path: pausePath, content: pauseDoc }),
       savePath ? apiPost('/file', { path: savePath, content: await _chatBuildTranscript(stamp) }) : Promise.resolve(),
+      sessPath ? apiPost('/file', { path: sessPath, content: JSON.stringify({
+        workflow: _chat.workflowId,
+        step: _chat.wfStep,
+        saved_at: now.toISOString(),
+        messages: _chatSerializeMessages(),
+      }, null, 2) }) : Promise.resolve(),
     ]);
     toast('⏸ Progress saved — returning to Dashboard');
     setTimeout(() => renderView('dashboard'), 800);
@@ -3110,7 +3238,7 @@ async function _chatBuildTranscript(stamp) {
     ``,
     `## Session Log`,
     ``,
-    ..._chat.messages.map(m => {
+    ..._chat.messages.filter(m => !m.verify || m.text).map(m => {
       const who  = m.role === 'agent' ? '### 🤖 Agent' : '### 👤 You';
       const body = (m.text || '').replace(/\r?\n/g, '\n');
       const code = m.codeBlock ? `\n\`\`\`\n${m.codeBlock}\n\`\`\`` : '';

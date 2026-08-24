@@ -89,6 +89,10 @@ def build_tree(root: Path, base: Path) -> list:
             items.append({"name": entry.name, "path": rel, "type": "dir",
                           "children": build_tree(entry, base)})
         elif entry.suffix == ".md":
+            # Session sidecars are machinery, not light — keep them out of
+            # lens lists and the vault tree (F3).
+            if entry.name.endswith(("-pause.md", "-chat.md")):
+                continue
             items.append({"name": entry.name, "path": rel, "type": "file"})
     return items
 
@@ -1061,6 +1065,18 @@ Then
                 return self.send_error_json(400, move_err)
 
             moved = [dest_lens]
+
+            # Session sidecars travel with the lens into the emission so no
+            # ghost paused-session entries survive an emit (F3).
+            lens_abs = safe_path(lens_path)
+            if lens_abs is not None:
+                for suffix in ("-pause.md", "-chat.md", "-session.json"):
+                    sidecar = lens_abs.with_name(lens_abs.stem + suffix)
+                    if sidecar.exists():
+                        rel_sidecar = f"{Path(lens_path).parent}/{sidecar.name}"
+                        dest_sidecar = f"{emission_dir}/{sidecar.name}"
+                        if not move_file(rel_sidecar, dest_sidecar):
+                            moved.append(dest_sidecar)
 
             # Find and move the source artifact if it exists and is in the vault
             meta = parse_frontmatter(content)

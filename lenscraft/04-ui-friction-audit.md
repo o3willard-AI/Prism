@@ -86,11 +86,23 @@ is written into the lens file with `**Status:** review` per the
 skill files' Output Handling rules. Verified end-to-end by
 `scripts/e2e-verify.js` (21 checks).
 
-### F3 — Shallow resume fidelity
-The pause checkpoint document is excellent, but the UI restore presents
+### F3 — Shallow resume fidelity ✅ resolved 24 Aug 2026
+~~The pause checkpoint document is excellent, but the UI restore presents
 the prior session log as one context blob rather than replaying the
 messages. The user must scroll to find where they left off. Good
-checkpoint, minimal restoration.
+checkpoint, minimal restoration.~~
+
+**Fix:** resume now replays the real session. A machine-readable sidecar
+(`<lens>-session.json`, written in lockstep with the 1.2s auto-save and
+by Pause Here) stores the messages that matter: text, prepared prompts,
+staging state, and F2 verdict cards — pending Accept/Re-run doors stay
+live across a pause. One shared `_wfResumeFromPause()` serves all three
+runners (rationalizations previously ignored the pause file entirely;
+hypotheses only restored post-processing). Resume restores the paused
+step and re-issues exactly the prompt that step needs when the
+scrollback doesn't already end with one. Sidecar hygiene: hidden from
+/tree and lens lists, travels into the emission on Emit, deleted with
+the lens. Verified by `scripts/e2e-verify-f3.js` (29 checks).
 
 ### F4 — Title still required in wizard Step 1
 Auto Name exists but is a button press, not a default. Every lens item
