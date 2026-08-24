@@ -14,3 +14,4 @@ the co-creator opts in.
 | GN-006 | No dead ends — every emission leaves the human holding a next action | Every lens, universal |
 | GN-007 | Domain-expectation bias: honor the door they entered, with weights and hard cutoffs | Every domain-named lens |
 | GN-008 | Next-step ordering follows the gate, not the domain | Every lens that emits next steps |
+| GN-009 | Use the world's vocabulary — invent names only for genuinely new concepts | Every naming decision |

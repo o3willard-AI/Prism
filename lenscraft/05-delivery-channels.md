@@ -79,6 +79,19 @@ states that make the human assemble the next move are friction against
 the glass. (Pairs with GN-006 — no dead ends — and the UI audit's
 closing law: keep the human inside their own thought.)
 
+## Resolution
+
+Confirmed by the co-creator: prepared prompts land in
+`vault/prompts/` — the world already knows what a prompt is
+(GN-009). Convention defined in `prism/vault/prompts/README.md`:
+date-slug filenames, frontmatter (Lens / Step / Status / Prepared),
+three doors (Copy · open-as-file · configured send-to), lifecycle
+prepared → sent → stale, never deleted.
+
+**Design law harvested (GN-009): use the world's vocabulary.** Invent
+names only for concepts that genuinely have no name yet; for everything
+else, base reality is the lowest-friction interface there is.
+
 ## Constraint check
 
 - Channels 1–2 keep Prism fully local-first, stdlib, keyless — the
