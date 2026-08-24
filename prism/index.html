@@ -347,6 +347,27 @@
   .wf-door:hover { background: #45475a; }
   .wf-door:disabled { opacity: 0.6; cursor: wait; }
   .wf-stage-saved { font-size: 11.5px; color: #a6e3a1; }
+  /* ── F2 verification verdict card (lenscraft/04, GN-009) ─────────────── */
+  .wf-verify { margin-top: 10px; border-radius: 10px; overflow: hidden;
+    border: 1px solid; }
+  .wf-verify.pass    { border-color: #14532d; background: #052e16; }
+  .wf-verify.partial { border-color: #713f12; background: #1c1403; }
+  .wf-verify.fail    { border-color: #7f1d1d; background: #2a0a0a; }
+  .wf-verify-head { display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; font-size: 12.5px; font-weight: 600; }
+  .wf-verify.pass .wf-verify-head    { color: #4ade80; }
+  .wf-verify.partial .wf-verify-head { color: #facc15; }
+  .wf-verify.fail .wf-verify-head    { color: #f87171; }
+  .wf-verify-score { margin-left: auto; font-weight: 400; font-size: 11px;
+    color: var(--text-secondary); }
+  .wf-verify-body { padding: 0 12px 10px; font-size: 12.5px;
+    color: var(--text-secondary); line-height: 1.55; }
+  .wf-verify-missing { margin: 6px 0 0; padding-left: 18px; }
+  .wf-verify-missing li { margin: 2px 0; }
+  .wf-verify-doors { display: flex; gap: 8px; padding: 8px 12px;
+    align-items: center; flex-wrap: wrap;
+    background: rgba(255,255,255,0.05); }
+  .wf-verify-applied { padding: 6px 12px; font-size: 11.5px; color: #4ade80; }
   .wf-stage-open { font-size: 11.5px; color: #89b4fa; cursor: pointer;
     text-decoration: underline; background: none; border: none; padding: 0; }
   .wf-typing {
@@ -544,41 +565,33 @@ async function renderDashboard(area) {
 }
 
 async function renderDesk(area) {
-  // Badge counts for the lens doors (from status)
-  let s = { dwell: {} };
-  try { s = await apiGet('/status'); } catch (e) {}
-  _status = s;
-  updateBadges(s);
+  // One call for the whole desk: items, badges, paused sessions (GET /lenses
+  // replaces the old /status + 3×/list fan-out).
+  let lensData = { lenses: {}, paused: [], counts: {}, badges: {} };
+  try { lensData = await apiGet('/lenses'); } catch (e) {}
+  _status = lensData;
+  updateBadges(lensData);
 
   // Paused sessions to resume (machine prepares; human steers — GN-009)
   let pausedRows = '';
-  try {
-    const lenses = ['requirements', 'hypotheses', 'rationalizations'];
-    const pauseChecks = await Promise.all(lenses.map(async l => {
-      const files = await apiGet('/list?path=' + l);
-      return (files || []).filter(f => f.type === 'file' && f.name.endsWith('-pause.md'));
-    }));
-    const pauses = pauseChecks.flat();
-    if (pauses.length) {
-      pausedRows = `
-        <div class="card" style="margin-top:20px">
-          <div class="section-header" style="margin-bottom:10px">
-            <h3 style="font-size:14px">Paused sessions</h3>
-            <span style="font-size:12px;color:var(--text-secondary)">pick up where you left off</span>
-          </div>
-          ${pauses.map(p => {
-            const lensKey = p.path.split('/')[0];
-            const lensPath = p.path.replace(/-pause\.md$/, '.md');
-            const label = lensPath.split('/').pop().replace('.md','').replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/-/g,' ');
-            return `<div class="desk-continue-row">
-              <span class="desk-pause-tag">⏸ paused</span>
-              <span style="flex:1;font-size:13.5px;font-weight:600">${escHtml(label)}</span>
-              <button class="desk-door" onclick="continueWorkflow('${escHtml(lensPath)}','${lensKey}','desk-content')">Resume →</button>
-            </div>`;
-          }).join('')}
-        </div>`;
-    }
-  } catch (e) { /* no paused sessions — that's fine */ }
+  const pauses = lensData.paused || [];
+  if (pauses.length) {
+    pausedRows = `
+      <div class="card" style="margin-top:20px">
+        <div class="section-header" style="margin-bottom:10px">
+          <h3 style="font-size:14px">Paused sessions</h3>
+          <span style="font-size:12px;color:var(--text-secondary)">pick up where you left off</span>
+        </div>
+        ${pauses.map(p => {
+          const label = p.name.split('/').pop().replace('.md','').replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/-/g,' ');
+          return `<div class="desk-continue-row">
+            <span class="desk-pause-tag">⏸ paused</span>
+            <span style="flex:1;font-size:13.5px;font-weight:600">${escHtml(label)}</span>
+            <button class="desk-door" onclick="continueWorkflow('${escHtml(p.path)}','${p.lens}','desk-content')">Resume →</button>
+          </div>`;
+        }).join('')}
+      </div>`;
+  }
 
   const lensDoors = [
     { key: 'requirements',     icon: '📋', label: 'Requirement',     hint: 'capability → developer-ready PRD' },
@@ -711,10 +724,11 @@ async function deskSubmit() {
 //    is the refraction desk now. See lenscraft/04-ui-friction-audit.md.) ──
 
 function updateBadges(s) {
-  const dwellTotal = (key) => (s.dwell?.[key] || []).reduce((a, b) => a + b, 0);
-  document.getElementById('badge-hyp').textContent = dwellTotal('hypotheses') || '–';
-  document.getElementById('badge-req').textContent = s.requirement_counts?.review || '–';
-  document.getElementById('badge-rat').textContent = s.rationalization_counts?.draft || '–';
+  // Badges now come straight from GET /lenses (single source of truth).
+  const b = s.badges || {};
+  document.getElementById('badge-hyp').textContent = b.hypotheses || '–';
+  document.getElementById('badge-req').textContent = b.requirements || '–';
+  document.getElementById('badge-rat').textContent = b.rationalizations || '–';
 }
 
 // ── Ingest ─────────────────────────────────────────────────────────────────
@@ -1390,7 +1404,7 @@ async function openReqInPanel(path) {
 // Requirements (Genesis) and Rationalizations (Gibberish).
 
 const LENS_CONFIGS = {
-  hypotheses:      { noun: 'Hypothesis',      seedWord: 'Epiphany',  endpoint: '/hypotheses/from-epiphany',         navKey: 'hypotheses',      contentId: 'hyp-content', placeholder: 'e.g. Users churn because onboarding is too long',   defaultWorkflow: null },
+  hypotheses:      { noun: 'Hypothesis',      seedWord: 'Epiphany',  endpoint: '/hypotheses/from-epiphany',         navKey: 'hypotheses',      contentId: 'hyp-content', placeholder: 'e.g. Users churn because onboarding is too long',   defaultWorkflow: 'hypotheses-default' },
   requirements:    { noun: 'Requirement',     seedWord: 'Genesis',   endpoint: '/requirements/from-genesis',        navKey: 'requirements',    contentId: 'req-content', placeholder: 'e.g. User can export report as PDF',               defaultWorkflow: 'requirements-default' },
   rationalizations:{ noun: 'Rationalization', seedWord: 'Gibberish', endpoint: '/rationalizations/from-gibberish',  navKey: 'rationalizations',contentId: 'rat-content', placeholder: 'e.g. Why we did not ship feature X',             defaultWorkflow: 'rationalizations-default' },
 };
@@ -2061,6 +2075,7 @@ let _chat = {
   wfStep:        'init',  // init | routing | inquiry | post-processing
   artifactContent: null,
   artifactMeta:  null,
+  pendingVerify: null,    // F2: awaiting Accept/Re-run decision on a verdict card
 };
 
 function renderWorkflowChat(area, config = {}) {
@@ -2079,6 +2094,7 @@ function renderWorkflowChat(area, config = {}) {
   _chat.artifactContent = null;
   _chat.artifactMeta    = null;
   if (_chat.speechRecog) { try { _chat.speechRecog.abort(); } catch(e){} _chat.speechRecog = null; }
+  _chat.pendingVerify = null;
 
   const greeting = config.agentGreeting ||
     'Hello! I\'m ready to assist. You can type your message, attach a document, or speak using the 🎤 button.';
@@ -2095,6 +2111,9 @@ function renderWorkflowChat(area, config = {}) {
   }
   if (_chat.artifactPath && _chat.workflowId === 'rationalizations-default') {
     _wfRatInit();
+  }
+  if (_chat.artifactPath && _chat.workflowId === 'hypotheses-default') {
+    _wfHypInit();
   }
 }
 
@@ -2179,20 +2198,24 @@ function _chatBubbleHtml(msg, idx) {
   // Post-processing option buttons
   const isPostProc = msg.role === 'agent' && _chat.wfStep === 'post-processing'
     && msg === _chat.messages[_chat.messages.length - 1];
+  // Option E (emit to integration) removed — no integration is configured,
+  // so the door does not exist yet (F8, GN-006: no dead affordances).
   const postProcHtml = isPostProc
     ? `<div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
          <button class="btn btn-sm" style="background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;text-align:left" onclick="wfOptA()">A — Archive &amp; Emit (no further steps)</button>
          <button class="btn btn-ghost btn-sm" style="text-align:left" onclick="wfOptB()">B — Re-run synthesis with additional input</button>
          <button class="btn btn-ghost btn-sm" style="text-align:left" onclick="wfOptC()">C — Send to additional workflow</button>
          <button class="btn btn-ghost btn-sm" style="text-align:left" onclick="wfOptD()">D — Return to Unprocessed queue</button>
-         <button class="btn btn-ghost btn-sm" style="text-align:left" onclick="wfOptE()">E — Archive &amp; emit to integration</button>
        </div>`
     : '';
+
+  // F2 verdict card (structure check on pasted agent output)
+  const verifyHtml = msg.verify ? _verifyCardHtml(idx) : '';
 
   return `
     <div class="wf-bubble-row ${msg.role}">
       <div class="wf-bubble-label">${label}</div>
-      <div class="wf-bubble ${msg.role}">${bodyHtml}${chips ? `<div class="wf-attach-list">${chips}</div>` : ''}${codeHtml}${postProcHtml}</div>
+      <div class="wf-bubble ${msg.role}">${bodyHtml}${chips ? `<div class="wf-attach-list">${chips}</div>` : ''}${codeHtml}${verifyHtml}${postProcHtml}</div>
     </div>`;
 }
 
@@ -2282,6 +2305,8 @@ function _wfDispatch(userText) {
     _wfReqRespond(userText);
   } else if (_chat.workflowId === 'rationalizations-default') {
     _wfRatRespond(userText);
+  } else if (_chat.workflowId === 'hypotheses-default') {
+    _wfHypRespond(userText);
   } else {
     _chatAgentSay('I received your message. Agent integration for this workflow is still being configured — check back soon.');
   }
@@ -2412,24 +2437,15 @@ function _wfReqRespond(userText) {
   const step = _chat.wfStep;
 
   if (step === 'awaiting-intent-synth') {
-    // User pasted Intent Synth output — now give them the PRD Gate prompt
-    const name = _chat.artifactTitle || _chat.artifactPath.split('/').pop().replace('.md','');
-    const prdPrompt = _wfReqPrdGatePrompt(_chat.artifactPath, name, userText);
-    _chat.wfStep = 'awaiting-prd-gate';
-    _chatAgentSay(
-      `✅ Intent Synthesizer output received.\n\nNow run this through the **PRD Gate**. Paste the output back here.`,
-      null
-    );
-    _chat.messages[_chat.messages.length - 1].codeBlock = prdPrompt;
-    const t = document.getElementById('wf-thread');
-    if (t) { t.innerHTML = _chat.messages.map(_chatBubbleHtml).join(''); _chatScrollBottom(); }
+    // F2: verify the pasted Intent Synthesizer output before advancing.
+    _wfVerifyPasted(userText, 'intent-synth');
     return;
   }
 
   if (step === 'awaiting-prd-gate') {
-    // User pasted PRD Gate output — move to post-processing
-    _chat.wfStep = 'post-processing';
-    _chatAgentSay(_wfReqPostProcessMsg());
+    // F2: verify the pasted PRD Gate output (Inquiry vs Execution) before
+    // advancing — silent advancement on garbage was the bug (lenscraft/04).
+    _wfVerifyPasted(userText, 'prd-gate');
     return;
   }
 
@@ -2498,10 +2514,8 @@ async function wfOptD() {
   }
   await renderView('ingest');
 }
-function wfOptE() {
-  _chat.wfStep = 'done';
-  _chatAgentSay('Integration emission is not yet configured. For now, use **Option A** to archive, then connect an integration from the Knowledge Base (vault/knowledge/integrations/).');
-}
+// wfOptE removed with its button (F8) — the integration door does not exist
+// until an integration is configured; see vault/knowledge/integrations/.
 
 function _wfReqPrdGatePrompt(path, name, content) {
   return `ARTIFACT TYPE:    formatted\nARTIFACT PATH:    ${path}\nREQUIREMENT NAME: ${name}\nSEED CONTENT:\n---\n${content}\n---\n\nSkill: vault/knowledge/resources/skills/prd-gate.md`;
@@ -2578,9 +2592,16 @@ async function _wfRatInit() {
 function _wfRatRespond(userText) {
   const step = _chat.wfStep;
 
-  if (step === 'awaiting-intent-synth' || step === 'awaiting-conv-synth' || step === 'awaiting-structure') {
-    _chat.wfStep = 'post-processing';
-    _chatAgentSay(_wfRatPostProcessMsg());
+  if (step === 'awaiting-intent-synth') {
+    _wfVerifyPasted(userText, 'intent-synth');
+    return;
+  }
+  if (step === 'awaiting-conv-synth') {
+    _wfVerifyPasted(userText, 'conv-synth');
+    return;
+  }
+  if (step === 'awaiting-structure') {
+    _wfVerifyPasted(userText, 'structured-account');
     return;
   }
 
@@ -2615,6 +2636,299 @@ function _wfRatConvSynthPrompt(path, type, content) {
 }
 function _wfRatStructurePrompt(path, name, content) {
   return `ARTIFACT TYPE:    formatted\nARTIFACT PATH:    ${path}\nRATIONALIZATION NAME: ${name}\nSEED CONTENT:\n---\n${content}\n---\n\nTask: Structure this formatted content into a complete Structured Account with the following sections: Context, Reasoning, Constraints, Trade-offs Accepted, Secondary Considerations, Revisit Trigger.`;
+}
+
+
+// ── Hypotheses Default Workflow Runner ─────────────────────────────────────
+// Chain per skills/clarification-gate.md ("When to Use" table):
+//   formatted          → Clarification Gate directly
+//   unordered/dictation→ Document Synthesizer → Clarification Gate
+// Output: a hypothesis brief (Framework C) written into the lens file.
+
+async function _wfHypInit() {
+  // Pause checkpoint first (same pattern as the Requirements runner)
+  const pausePath = _chatPausePath();
+  if (pausePath) {
+    try {
+      const { content: pauseContent } = await apiGet(`/file?path=${encodeURIComponent(pausePath)}`);
+      const pauseMeta = parseMarkdownMeta(pauseContent);
+      if (pauseMeta.step) _chat.wfStep = pauseMeta.step;
+      if (_chat.wfStep === 'post-processing') {
+        _chat.messages.push({ role: 'agent', text: _wfHypPostProcessMsg(), attachments: [] });
+        _wfRerenderThread();
+        return;
+      }
+    } catch(_) { /* no pause file — start fresh */ }
+  }
+
+  try {
+    const { content } = await apiGet(`/file?path=${encodeURIComponent(_chat.artifactPath)}`);
+    _chat.artifactContent = content;
+    _chat.artifactMeta    = parseMarkdownMeta(content);
+  } catch(e) {
+    _chatAgentSay(`⚠️ Could not load artifact at \`${_chat.artifactPath}\`: ${e.message}`);
+    return;
+  }
+
+  const meta = _chat.artifactMeta;
+  const type = (meta.artifact_type || meta.type || '').toLowerCase().split(/[\s/]/)[0];
+  const name = _chat.artifactTitle || _chat.artifactPath.split('/').pop().replace('.md','');
+
+  const blocked = ['media','application','code'];
+  if (blocked.includes(type)) {
+    _chatAgentSay(
+      `⚠️ Artifact type **"${type}"** cannot be processed by the Hypotheses Default workflow.\n\n` +
+      `Please convert it to **formatted** or **unordered** text first, or select a different workflow.`
+    );
+    _chat.wfStep = 'blocked';
+    return;
+  }
+
+  let routeMsg, skillPrompt;
+  if (type === 'formatted') {
+    routeMsg = `**Step 1 complete — artifact type detected: \`formatted\`**\n\nThis artifact goes directly to the **Clarification Gate**.\n\nBelow is the Clarification Gate prompt. Run it through your AI agent and paste the output back here.`;
+    _chat.wfStep = 'awaiting-clarification';
+    skillPrompt = _wfHypGatePrompt(_chat.artifactPath, name, _chat.artifactContent);
+  } else {
+    routeMsg = `**Step 1 complete — artifact type detected: \`${type || 'unordered'}\`**\n\nThis artifact goes to **Document Synthesizer → Clarification Gate**.\n\nBelow is the Document Synthesizer prompt. Paste the output back here.`;
+    _chat.wfStep = 'awaiting-doc-synth';
+    skillPrompt = _wfHypDocSynthPrompt(_chat.artifactPath, type || 'unordered', _chat.artifactContent);
+  }
+
+  _chat.messages[_chat.messages.length - 1] = {
+    role: 'agent',
+    text: routeMsg,
+    attachments: [],
+    codeBlock: skillPrompt,
+  };
+  _wfRerenderThread();
+}
+
+function _wfHypRespond(userText) {
+  const step = _chat.wfStep;
+
+  if (step === 'awaiting-doc-synth') {
+    _wfVerifyPasted(userText, 'doc-synth');
+    return;
+  }
+
+  if (step === 'awaiting-clarification') {
+    _wfVerifyPasted(userText, 'hypothesis-brief');
+    return;
+  }
+
+  if (step === 'post-processing') {
+    _chatAgentSay('Please choose one of the options above to continue. You can also type additional context if you want to re-run the gate (choose Option B first).');
+    return;
+  }
+
+  if (step === 'inquiry') {
+    const name = _chat.artifactTitle || _chat.artifactPath.split('/').pop().replace('.md','');
+    const enriched = (_chat.artifactContent || '') + '\n\n--- Additional context from user ---\n' + userText;
+    const gatePrompt = _wfHypGatePrompt(_chat.artifactPath, name, enriched);
+    _chat.wfStep = 'awaiting-clarification';
+    _chat.messages.push({ role: 'agent', text: 'Re-running the **Clarification Gate** with your additional context. Paste the new output back here.', attachments: [], codeBlock: gatePrompt });
+    _wfRerenderThread();
+    return;
+  }
+
+  _chatAgentSay('Type a message or use the buttons above to choose the next step.');
+}
+
+function _wfHypPostProcessMsg() {
+  return `✅ Hypothesis brief received and written into the lens file (status: review). Choose how to proceed:\n\nUse the action buttons below to continue.`;
+}
+
+function _wfHypGatePrompt(path, name, content) {
+  return `ARTIFACT TYPE:    formatted\nARTIFACT PATH:    ${path}\nLENS NAME:        Hypothesis\nDOCUMENT NAME:    ${name}\nSEED CONTENT:\n---\n${content}\n---\n\nSkill: vault/knowledge/resources/skills/clarification-gate.md (Framework C — Hypothesis)`;
+}
+
+function _wfHypDocSynthPrompt(path, type, content) {
+  return `ARTIFACT TYPE:    ${type}\nARTIFACT PATH:    ${path}\nLENS NAME:        Hypothesis\nSEED WORD:        Epiphany\nRAW CONTENT:\n---\n${content}\n---\n\nSkill: vault/knowledge/resources/skills/doc-synth.md`;
+}
+
+
+// ── F2 — Paste-back verification ────────────────────────────────────────────
+// The machine checks pasted agent output against the skill's declared output
+// shape (POST /verify — deterministic, no LLM). Structure verified by the
+// machine; content stays the human's to steer (GN-009). Silent advancement
+// on garbage was scattered light (lenscraft/04 — F2).
+
+const _VERIFY_TERMINAL = { 'prd-gate': true, 'structured-account': true, 'hypothesis-brief': true };
+
+async function _wfVerifyPasted(userText, shape) {
+  let v;
+  try {
+    v = await apiPost('/verify', { shape, content: userText });
+  } catch (e) {
+    // Verification unavailable — never block the flow on a failed check.
+    v = { ok: true, verdict: 'match', kind: null, kind_label: 'unverified',
+          hits: 0, total: 0, missing: [], shape,
+          advice: 'Verification endpoint unreachable — advancing without a shape check.' };
+  }
+  if (!v.ok) {
+    v = { ...v, verdict: 'match', kind: null, kind_label: 'unverified',
+          hits: 0, total: 0, missing: [], shape, advice: v.error || 'Skipped shape check.' };
+  }
+
+  const idx = _chat.messages.length - 1;   // the user's paste
+  _chat.messages.push({
+    role: 'agent', text: '', attachments: [],
+    verify: { ...v, shape, msgIdx: idx, accepted: false, done: v.verdict === 'match' },
+  });
+  if (v.verdict === 'match') {
+    _wfAdvanceVerified(v, userText);
+  }
+  _wfRerenderThread();
+  _chatScheduleSave();
+}
+
+function _verifyCardHtml(idx) {
+  const v = _chat.messages[idx].verify;
+  if (!v) return '';
+  const cls = v.verdict === 'match' ? 'pass' : v.verdict === 'partial' ? 'partial' : 'fail';
+  const icon = v.verdict === 'match' ? '✅' : v.verdict === 'partial' ? '🟡' : '🔴';
+  const head = v.verdict === 'match'
+    ? `Structure verified — ${v.kind_label || 'shape check passed'}`
+    : v.verdict === 'partial'
+      ? `Partial match — ${v.kind_label || 'shape unclear'}`
+      : 'Shape not recognised';
+  const missing = (v.missing || []).length
+    ? `<ul class="wf-verify-missing">${v.missing.map(m => `<li>${escHtml(m)}</li>`).join('')}</ul>`
+    : '';
+  const doors = v.done
+    ? `<div class="wf-verify-applied">${v.accepted ? '✓ accepted — workflow advanced' : '✓ re-run requested'}</div>`
+    : v.verdict === 'match'
+      ? ''   // auto-advanced; no decision needed
+      : `<div class="wf-verify-doors">
+           <button class="wf-door" onclick="_verifyAccept(${idx})">✓ Accept anyway</button>
+           <button class="wf-door" onclick="_verifyRerun(${idx})">↻ Re-run the skill</button>
+         </div>`;
+  return `
+    <div class="wf-verify ${cls}">
+      <div class="wf-verify-head">${icon} ${head}
+        <span class="wf-verify-score">${v.total ? v.hits + '/' + v.total + ' markers' : ''}</span>
+      </div>
+      <div class="wf-verify-body">
+        ${escHtml(v.advice || '')}${missing}
+      </div>
+      ${doors}
+    </div>`;
+}
+
+function _verifyAccept(idx) {
+  const v = _chat.messages[idx].verify;
+  if (!v || v.done) return;
+  const userText = _chat.messages[v.msgIdx]?.text || '';
+  v.done = true; v.accepted = true;
+  _wfAdvanceVerified(v, userText);
+  _wfRerenderThread();
+  _chatScheduleSave();
+}
+
+function _verifyRerun(idx) {
+  const v = _chat.messages[idx].verify;
+  if (!v || v.done) return;
+  v.done = true; v.accepted = false;
+  // Re-issue the last prompt with the missing sections called out —
+  // steering, not authorship: the human edits the prompt before re-sending.
+  let lastPrompt = '';
+  for (let i = _chat.messages.length - 1; i >= 0; i--) {
+    if (_chat.messages[i].codeBlock) { lastPrompt = _chat.messages[i].codeBlock; break; }
+  }
+  const note = `\n\n[Prism steering — address these before regenerating]\nMissing structural sections in the previous output:\n${(v.missing || []).map(m => '- ' + m).join('\n')}\n`;
+  _chat.messages.push({
+    role: 'agent',
+    text: `Re-run the skill with this steering note appended — it calls out the sections the previous output was missing.`,
+    attachments: [],
+    codeBlock: lastPrompt ? lastPrompt + note : `The previous output was missing: ${(v.missing || []).join('; ')}. Please regenerate.`,
+  });
+  _wfRerenderThread();
+  _chatScheduleSave();
+}
+
+// Single source of truth for "the paste was accepted" transitions — used by
+// both auto-advance (match) and the Accept-anyway door (partial/fail).
+function _wfAdvanceVerified(v, userText) {
+  const isTerminal = !!_VERIFY_TERMINAL[v.shape];
+  const isInquiry  = v.kind === 'inquiry';
+
+  // Terminal output → write it into the lens file (Output Handling rule in
+  // the skill files: "Save as the main content… Set **Status:** review").
+  if (isTerminal && !isInquiry) _wfApplyAccepted(v, userText);
+
+  if (_chat.workflowId === 'requirements-default') {
+    if (v.shape === 'intent-synth') {
+      const name = _chat.artifactTitle || _chat.artifactPath.split('/').pop().replace('.md','');
+      const prdPrompt = _wfReqPrdGatePrompt(_chat.artifactPath, name, userText);
+      _chat.wfStep = 'awaiting-prd-gate';
+      _chat.messages.push({ role: 'agent', text: 'Intent Synthesizer output accepted.\n\nNow run this through the **PRD Gate**. Paste the output back here.', attachments: [], codeBlock: prdPrompt });
+    } else if (v.shape === 'prd-gate') {
+      if (isInquiry) {
+        _chat.wfStep = 'inquiry';
+        _chat.messages.push({ role: 'agent', text: 'The PRD Gate has questions — its certainty is below 95%. Answer them below; when you send your answers Prism re-runs the gate with the enriched input.', attachments: [] });
+      } else {
+        _chat.wfStep = 'post-processing';
+        _chat.messages.push({ role: 'agent', text: _wfReqPostProcessMsg(), attachments: [] });
+      }
+    }
+  } else if (_chat.workflowId === 'rationalizations-default') {
+    _chat.wfStep = 'post-processing';
+    _chat.messages.push({ role: 'agent', text: _wfRatPostProcessMsg(), attachments: [] });
+  } else if (_chat.workflowId === 'hypotheses-default') {
+    if (v.shape === 'doc-synth') {
+      const name = _chat.artifactTitle || _chat.artifactPath.split('/').pop().replace('.md','');
+      const gatePrompt = _wfHypGatePrompt(_chat.artifactPath, name, userText);
+      _chat.wfStep = 'awaiting-clarification';
+      _chat.messages.push({ role: 'agent', text: 'Synthesis Blocks accepted.\n\nNow run them through the **Clarification Gate** to produce the hypothesis brief. Paste the output back here.', attachments: [], codeBlock: gatePrompt });
+    } else if (v.shape === 'hypothesis-brief') {
+      if (isInquiry) {
+        _chat.wfStep = 'inquiry';
+        _chat.messages.push({ role: 'agent', text: 'The Clarification Gate has questions — its certainty is below 95%. Answer them below; when you send your answers Prism re-runs the gate with the enriched input.', attachments: [] });
+      } else {
+        _chat.wfStep = 'post-processing';
+        _chat.messages.push({ role: 'agent', text: _wfHypPostProcessMsg(), attachments: [] });
+      }
+    }
+  }
+}
+
+// Write accepted terminal agent output into the lens file.
+async function _wfApplyAccepted(v, userText) {
+  const lensPath = _chat.artifactPath;   // capture up front — may clear mid-flight
+  if (!lensPath) return;
+  try {
+    const { content } = await apiGet(`/file?path=${encodeURIComponent(lensPath)}`);
+    const lines = content.split('\n');
+    // Preserve frontmatter (through the first ---), then the seed section
+    // (Genesis / Epiphany / Gibberish provenance) through its closing ---.
+    let dashCount = 0, provEnd = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].trim() === '---') {
+        dashCount++;
+        if (dashCount === 2) { provEnd = i; break; }
+      }
+    }
+    const keep = (provEnd >= 0 ? lines.slice(0, provEnd + 1) : lines).join('\n');
+    const today = new Date().toISOString().slice(0, 10);
+    const updatedHead = keep
+      .replace(/\*\*Status:\*\*.*/i, '**Status:** review')
+      .replace(/\*\*Last updated:\*\*.*/i, `**Last updated:** ${today}`);
+    const sectionLabel = ({
+      'prd-gate': '## PRD (agent output, structure verified by Prism)',
+      'structured-account': '## Structured Account (agent output, structure verified by Prism)',
+      'hypothesis-brief': '## Hypothesis brief (agent output, structure verified by Prism)',
+    })[v.shape] || '## Agent output (structure verified by Prism)';
+    await apiPost('/file', { path: lensPath, content: `${updatedHead}\n\n${sectionLabel}\n\n${userText.trim()}\n` });
+    toast('✓ Output written into the lens file — status set to review');
+  } catch (e) {
+    toast(`⚠️ Could not write output into the lens file: ${e.message}`, true);
+  }
+}
+
+function _wfRerenderThread() {
+  const t = document.getElementById('wf-thread');
+  if (t) { t.innerHTML = _chat.messages.map(_chatBubbleHtml).join(''); _chatScrollBottom(); }
 }
 
 
@@ -2689,10 +3003,14 @@ async function wfPauseHere() {
   const stepDescriptions = {
     'init':               'Workflow initialising — artifact not yet loaded.',
     'routing':            'Detecting artifact type and choosing agent path.',
+    'awaiting-doc-synth': 'Waiting for Document Synthesizer output from user.',
+    'awaiting-clarification': 'Waiting for Clarification Gate output from user.',
     'awaiting-intent-synth': 'Waiting for Intent Synthesizer output from user.',
+    'awaiting-conv-synth': 'Waiting for Conversation Synthesizer output from user.',
+    'awaiting-structure':  'Waiting for Structured Account output from user.',
     'awaiting-prd-gate':  'Waiting for PRD Gate output from user.',
-    'post-processing':    'PRD Gate output received — awaiting post-processing choice.',
-    'inquiry':            'PRD Gate requested clarifications — collecting additional user input.',
+    'post-processing':    'Agent output received — awaiting post-processing choice.',
+    'inquiry':            'Agent requested clarifications — collecting additional user input.',
     'done':               'Workflow complete.',
     'blocked':            'Workflow blocked — unsupported artifact type.',
   };

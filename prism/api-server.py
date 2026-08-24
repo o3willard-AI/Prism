@@ -123,6 +123,259 @@ def parse_frontmatter(content: str) -> dict:
     return meta
 
 
+# ── Lens registry (one call replaces N+1 /status + /list fan-out) ───────────
+
+LENS_FOLDERS = ["requirements", "hypotheses", "rationalizations"]
+
+
+def list_lenses() -> dict:
+    """One consolidated view of every thought lens: items, statuses, paused
+    sessions, and the counts the sidebar badges show."""
+    lenses = {}
+    paused = []
+    counts = {}
+
+    for lens in LENS_FOLDERS:
+        folder = DATA_ROOT / lens
+        items, lens_counts = [], {}
+        if folder.exists():
+            for f in sorted(folder.glob("*.md")):
+                name = f.name
+                if name.startswith("_"):
+                    continue
+                # Session sidecars belong to the session, not the lens list
+                if name.endswith("-pause.md") or name.endswith("-chat.md"):
+                    if name.endswith("-pause.md"):
+                        meta = parse_frontmatter(f.read_text(encoding="utf-8"))
+                        paused.append({
+                            "lens":     lens,
+                            "path":     f"{lens}/{name[:-9]}.md",  # strip '-pause.md', add '.md'
+                            "name":     name[:-9],
+                            "step":     meta.get("step", ""),
+                            "paused_at": meta.get("paused", ""),
+                        })
+                    continue
+                meta = parse_frontmatter(f.read_text(encoding="utf-8"))
+                status = meta.get("status", "draft")
+                lens_counts[status] = lens_counts.get(status, 0) + 1
+                items.append({
+                    "name":   name[:-3],
+                    "path":   f"{lens}/{name}",
+                    "status": status,
+                    "title":  meta.get("title", ""),
+                    "created": meta.get("created", ""),
+                    "last_updated": meta.get("last_updated", ""),
+                })
+        lenses[lens] = items
+        counts[lens] = lens_counts
+
+    # Badge semantics (kept identical to the old /status-based wiring):
+    #   hyp badge = total hypotheses in flight
+    #   req badge = requirements awaiting review
+    #   rat badge = rationalizations still in draft
+    badges = {
+        "hypotheses":      sum(counts.get("hypotheses", {}).values()),
+        "requirements":    counts.get("requirements", {}).get("review", 0),
+        "rationalizations": counts.get("rationalizations", {}).get("draft", 0),
+    }
+    return {"lenses": lenses, "paused": paused, "counts": counts, "badges": badges}
+
+
+# ── Paste-back verification (F2) ─────────────────────────────────────────────
+# Deterministic shape checks against the output contracts already written in
+# the skill files. The machine verifies structure; the human steers content.
+# See lenscraft/04-ui-friction-audit.md (F2) and GN-009.
+
+VERIFY_SHAPES = {
+    # From skills/prd-gate.md — 95% certainty rule, two labelled output kinds
+    "prd-gate": {
+        "label": "PRD Gate",
+        "kinds": {
+            "inquiry": {
+                "label": "Inquiry (clarifying questions)",
+                "required": [
+                    ("certainty statement", r"(?i)certainty.{0,80}below 95\s*%|I have identified"),
+                    ("numbered question list", r"(?m)^\s*(?:1[\.\)]|-\s+\d+[\.\)])\s+\S"),
+                ],
+            },
+            "execution": {
+                "label": "Execution (developer-ready PRD)",
+                "required": [
+                    ("clarity confirmation", r"(?i)scope clarity confirmed|95\s*%\+|95%\+"),
+                    ("Executive Summary", r"(?i)executive\s+summary"),
+                    ("Success Metrics", r"(?i)success\s+metrics"),
+                    ("User Personas", r"(?i)user\s+personas?"),
+                    ("Functional Requirements (MoSCoW)", r"(?i)functional\s+requirements"),
+                    ("Technical Architecture", r"(?i)technical\s+architecture"),
+                    ("Acceptance Criteria (Given/When/Then)", r"(?i)acceptance\s+criteria"),
+                    ("Risks & Assumptions", r"(?i)risks?\s*[&and]*\s*assumptions?"),
+                ],
+            },
+        },
+    },
+    # From skills/intent-synth.md — Five Intention Blocks
+    "intent-synth": {
+        "label": "Intent Synthesizer",
+        "kinds": {
+            "blocks": {
+                "label": "Five Intention Blocks",
+                "required": [
+                    ("Core Objective & Problem Statement", r"(?i)core\s+objective"),
+                    ("Primary Intentions (Functional)", r"(?i)primary\s+intentions?"),
+                    ("Technical & Architectural Constraints", r"(?i)(technical|architectural)\s+.{0,30}constraints?"),
+                    ("Edge Cases & Sidetrack Insights", r"(?i)edge\s+cases?"),
+                    ("Identified Ambiguities", r"(?i)identified\s+ambiguities?|ambiguities\s+identified"),
+                ],
+            },
+        },
+    },
+    # From skills/conv-synth.md — Five Actionable Blocks
+    "conv-synth": {
+        "label": "Conversation Synthesizer",
+        "kinds": {
+            "blocks": {
+                "label": "Five Actionable Blocks",
+                "required": [
+                    ("Executive Summary", r"(?i)executive\s+summary"),
+                    ("Key Initiatives & Deliverables", r"(?i)key\s+initiatives?"),
+                    ("Operational & Budgetary Constraints", r"(?i)(operational|budgetary)\s+.{0,30}constraints?|constraints?"),
+                    ("Secondary Considerations & Future Items", r"(?i)secondary\s+considerations?"),
+                    ("Open Questions & Ambiguities", r"(?i)open\s+questions?"),
+                ],
+            },
+        },
+    },
+    # Structured Account sections (rationalizations-from-gibberish template)
+    "structured-account": {
+        "label": "Structured Account",
+        "kinds": {
+            "account": {
+                "label": "Structured Account sections",
+                "required": [
+                    ("Context", r"(?im)^\s*#+\s*context\s*$|\*\*context\*\*"),
+                    ("Reasoning", r"(?im)^\s*#+\s*reasoning\s*$|\*\*reasoning\*\*"),
+                    ("Constraints", r"(?im)^\s*#+\s*constraints\s*$|\*\*constraints\*\*"),
+                    ("Trade-offs Accepted", r"(?i)trade-?offs?\s+accepted"),
+                    ("Secondary Considerations", r"(?i)secondary\s+considerations?"),
+                    ("Revisit Trigger", r"(?i)revisit\s+trigger"),
+                ],
+            },
+        },
+    },
+    # From skills/doc-synth.md — Five Synthesis Blocks
+    "doc-synth": {
+        "label": "Document Synthesizer",
+        "kinds": {
+            "blocks": {
+                "label": "Five Synthesis Blocks",
+                "required": [
+                    ("Core Subject & Context", r"(?i)core\s+subject"),
+                    ("Key Assertions & Primary Points", r"(?i)key\s+assertions?"),
+                    ("Constraints & Dependencies", r"(?i)constraints?\s*(?:[&and]*\s*dependencies?)?|dependencies?"),
+                    ("Tangents & Secondary Insights", r"(?i)tangents?"),
+                    ("Identified Ambiguities", r"(?i)identified\s+ambiguities?|ambiguities\s+identified"),
+                ],
+            },
+        },
+    },
+    # From skills/clarification-gate.md Framework C — Hypothesis brief
+    # (two output kinds, same 95% certainty rule as PRD Gate)
+    "hypothesis-brief": {
+        "label": "Clarification Gate (Hypothesis)",
+        "kinds": {
+            "inquiry": {
+                "label": "Inquiry (clarifying questions)",
+                "required": [
+                    ("certainty statement", r"(?i)certainty.{0,80}below 95\s*%|I have identified"),
+                    ("numbered question list", r"(?m)^\s*(?:1[\.\)]|-\s+\d+[\.\)])\s+\S"),
+                ],
+            },
+            "brief": {
+                "label": "Hypothesis brief",
+                "required": [
+                    ("Hypothesis Statement", r"(?i)hypothesis\s+statement|we\s+believe\s+that"),
+                    ("Basis", r"(?i)\bBasis\b"),
+                    ("Success Signal", r"(?i)success\s+signal"),
+                    ("Failure Signal", r"(?i)failure\s+signal"),
+                    ("Test Approach", r"(?i)test\s+approach"),
+                    ("Assumptions", r"(?i)assumptions?"),
+                ],
+            },
+        },
+    },
+}
+
+
+# Precompile every verify pattern at import time. Python 3.11+ rejects
+# inline global flags mid-expression (e.g. "(?im)…|(?i)…"), so a bad
+# pattern must crash the server at startup — never on a user's request.
+_VERIFY_PATTERNS = {}
+for _sk, _shape in VERIFY_SHAPES.items():
+    for _kk, _spec in _shape["kinds"].items():
+        for _name, _pat in _spec["required"]:
+            _VERIFY_PATTERNS[(_sk, _kk, _name)] = re.compile(_pat)
+
+
+def verify_output(shape_key: str, content: str) -> dict:
+    """Check pasted agent output against the declared output shape.
+
+    Returns a verdict the chat UI renders: which kind matched, which
+    structural markers are present/missing, and steering advice. No LLM —
+    pure deterministic shape matching."""
+    shape = VERIFY_SHAPES.get(shape_key)
+    if shape is None:
+        return {"ok": False, "error": f"unknown shape: {shape_key}"}
+    if not (content or "").strip():
+        return {"ok": False, "error": "content required"}
+
+    best_kind, best_hits, best_checks = None, 0, []
+    kinds = {}
+    for kind_key, spec in shape["kinds"].items():
+        checks = []
+        for name, pattern in spec["required"]:
+            compiled = _VERIFY_PATTERNS[(shape_key, kind_key, name)]
+            checks.append({"name": name, "present": bool(compiled.search(content))})
+        hits = sum(1 for c in checks if c["present"])
+        kinds[kind_key] = {"label": spec["label"], "checks": checks, "hits": hits,
+                           "total": len(checks)}
+        if hits > best_hits or (hits == best_hits and best_kind is None):
+            best_kind, best_hits, best_checks = kind_key, hits, checks
+
+    total = len(best_checks)
+    ratio = best_hits / total if total else 0
+    if ratio >= 0.8:
+        verdict = "match"          # shape is recognisably there
+    elif ratio >= 0.4:
+        verdict = "partial"        # close — surface what's missing, human decides
+    else:
+        verdict = "unrecognized"   # does not look like the expected output
+
+    missing = [c["name"] for c in best_checks if not c["present"]]
+
+    if verdict == "match":
+        advice = f"Output matches the {shape['label']} contract ({best_hits}/{total} structural markers). Structure verified — content is yours to steer."
+    elif verdict == "partial":
+        advice = (f"Output partially matches the {shape['label']} contract "
+                  f"({best_hits}/{total} markers). Missing: {'; '.join(missing)}. "
+                  f"You can accept it anyway, or re-run the skill with a note about the missing sections.")
+    else:
+        advice = (f"This does not look like {shape['label']} output "
+                  f"({best_hits}/{total} markers found). It may be the wrong skill's "
+                  f"output, or free-form text. Accept it as context, or re-run.")
+
+    return {
+        "ok": True,
+        "shape": shape_key,
+        "verdict": verdict,
+        "kind": best_kind,
+        "kind_label": shape["kinds"][best_kind]["label"] if best_kind else None,
+        "hits": best_hits,
+        "total": total,
+        "missing": missing,
+        "advice": advice,
+    }
+
+
 def get_status() -> dict:
     """Aggregate Prism status stats."""
     status = {
@@ -299,6 +552,9 @@ class PrismHandler(http.server.BaseHTTPRequestHandler):
                 if f.is_dir() or f.suffix == ".md"
             ]
             self.send_json(200, files)
+
+        elif path == "/lenses":
+            self.send_json(200, list_lenses())
 
         elif path == "/workflows":
             wf_dir = DATA_ROOT / "workflows"
@@ -723,6 +979,15 @@ Then
                 "artifact_type": artifact_type
             })
 
+        elif path == "/verify":
+            body = self.read_body()
+            if not body or not (body.get("content") or "").strip():
+                return self.send_error_json(400, "content required")
+            shape_key = (body.get("shape") or "").strip()
+            if shape_key not in VERIFY_SHAPES:
+                return self.send_error_json(400, f"shape must be one of: {', '.join(sorted(VERIFY_SHAPES))}")
+            self.send_json(200, verify_output(shape_key, body["content"]))
+
         elif path == "/prompt":
             # File a prepared prompt into vault/prompts/ (delivery channel 2:
             # filesystem handoff). See lenscraft/05-delivery-channels.md and
@@ -830,7 +1095,12 @@ if __name__ == "__main__":
     if not DATA_ROOT.exists():
         print(f"ERROR: vault/ directory not found at {DATA_ROOT}")
         sys.exit(1)
-    server = socketserver.ThreadingTCPServer(("127.0.0.1", PORT), PrismHandler)
+
+    class ReusableServer(socketserver.ThreadingTCPServer):
+        # Survive rapid restarts: don't fail bind on lingering TIME_WAIT
+        allow_reuse_address = True
+
+    server = ReusableServer(("127.0.0.1", PORT), PrismHandler)
     server.daemon_threads = True   # don't block shutdown on in-flight requests
     print(f"Prism API listening on http://127.0.0.1:{PORT} (threaded)")
     print(f"Vault root: {DATA_ROOT}")

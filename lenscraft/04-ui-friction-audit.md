@@ -66,11 +66,25 @@ the user must manually select text inside a `<pre>` block. Zero
 clipboard references in the codebase. This is the highest-friction
 point in the loop the product is built around.
 
-### F2 — No paste-back verification
-Any text is accepted as skill output; the state machine advances on
+### F2 — No paste-back verification ✅ resolved 24 Aug 2026
+~~Any text is accepted as skill output; the state machine advances on
 faith. No structural sanity check (e.g., Intention Block headers,
 Inquiry-vs-Execution labels) before routing to the next step. Silent
-advancement on garbage input is scattered light.
+advancement on garbage input is scattered light.~~
+
+**Fix:** `POST /verify` — deterministic shape checks against the output
+contracts already declared in the skill files (no LLM). Every
+paste-back in the requirements / rationalizations / hypotheses
+workflows is now verified before the state machine advances:
+`match` auto-advances and records a green verdict card; `partial` /
+`unrecognized` stop the flow and offer two steering doors — Accept
+anyway (content is the human's to steer) or Re-run the skill with a
+steering note appending the missing sections to the prompt. PRD Gate
+Inquiry outputs are now detected and routed to the inquiry step
+instead of being treated as a completed PRD. Accepted terminal output
+is written into the lens file with `**Status:** review` per the
+skill files' Output Handling rules. Verified end-to-end by
+`scripts/e2e-verify.js` (21 checks).
 
 ### F3 — Shallow resume fidelity
 The pause checkpoint document is excellent, but the UI restore presents
@@ -99,11 +113,16 @@ input surface ("bring fog, get focus"), not a status board. Related:
 there is no single "start here" affordance — new items are reached via
 per-lens nav + per-lens New buttons. Multiple doors = decision friction.
 
-### F8 — Dead button: Option E
-"Archive and emit to integration" exists as a button that replies
+### F8 — Dead button: Option E ✅ resolved 24 Aug 2026
+~~"Archive and emit to integration" exists as a button that replies
 "not yet configured." A dead control violates GN-006 in UI form —
 every visible affordance should leave the user holding a next action,
-and a button that leads nowhere is friction of the worst kind.
+and a button that leads nowhere is friction of the worst kind.~~
+
+**Fix:** the button is removed entirely. The door does not exist until
+an integration is configured — then it reappears as a live affordance
+(delivery-channel / emission-focal-point architecture: doors appear
+when they can be opened, never as dead placeholders).
 
 ### F9 — Duplicated ingest paths with silent divergence
 The Ingest page and the wizard quick-ingest are near-duplicate forms —
