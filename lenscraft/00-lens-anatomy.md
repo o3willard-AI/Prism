@@ -13,6 +13,18 @@ defined entirely as text — no machinery, no state, no runtime.
 
 ## The eight components
 
+### 0. Identity & name — *what this glass is called*
+
+Every lens needs a handle. The name often encodes the reception
+condition itself (`can-ai-help-me` *is* the shape of the scattering it
+accepts). Naming is the first move of a grind session, not a last
+polish: an abbreviation or quick phrase that the co-creator can say
+aloud. Too long, and the lens loses its handle; too clever, and it
+loses its honesty.
+
+*Reference: Session 1 — "Obviously that's too long of a name for a
+lens, so shall we use an abbreviation or a quick phrase?"*
+
 ### 1. Reception condition — *what light this lens accepts*
 
 Every lens opens with a trigger table: input shapes it accepts, and input

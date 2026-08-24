@@ -58,10 +58,45 @@ hedging.
 
 ## The loop
 
+### Structure: a gradient with two hard checkpoints
+
+The phases below describe a **gradient, not a rigid sequence**. In
+practice they interleave — fundamental-outcome work fuses with
+convergent design; harvest sparks land mid-phase. The design's spine is
+the gradient (wide → narrow → draft → test → shelve). Exactly two
+checkpoints are hard and may never be skipped:
+
+- **Checkpoint A — Ratification:** the fundamental outcomes must be
+  explicitly confirmed by the co-creator before the draft is written.
+  Until ratified, outcomes are provisional.
+- **Checkpoint B — Test light:** no lens is shelved as active until
+  real light has passed through it (Phase 4). Drafts shelve as
+  `draft`; only tested glass is `active`.
+
+Everything else may interleave freely.
+
 ### Phase 0 — Reception (wide open)
 
-The co-creator arrives with scattered intent: a recurring raw input, a
-pain, a wish. The machine opens space:
+**First move: identify the arrival shape.** A co-creator arrives in one
+of two shapes, and the grinder must tell them apart before anything
+else (GN-001 lives here):
+
+- **Shape 1 — recurring raw input:** "here is a class of scattering I
+  keep receiving." The sample is Level-M material for designing the
+  lens's reception condition.
+- **Shape 2 — a lens spec in disguise:** "I want a tool that does X."
+  This is *also* Level-M material — the shape of the lens to create,
+  not input to refract.
+
+If the grinder starts refracting the sample instead of designing glass
+for it, stop and correct back (GN-001).
+
+**Second move: naming.** Give the glass a handle — an abbreviation or
+quick phrase the co-creator can say aloud. Naming early keeps every
+subsequent question anchored to something concrete (anatomy,
+Component 0).
+
+Then open space:
 
 - What is the raw material? Show me a real sample if you can.
 - Who produces it, and in what state does it arrive?
@@ -86,7 +121,12 @@ The machine restates what it heard and begins descending:
 
 The machine states each fundamental outcome back as a testable
 sentence: *"The emission must let an agent determine X without human
-clarification."* The co-creator confirms, corrects, or adds.
+clarification."*
+
+**CHECKPOINT A — Ratification.** The outcomes are drafted, then
+explicitly confirmed by the co-creator — not assumed. Until ratified
+they are provisional; the draft lens may not be written against
+unratified outcomes.
 
 *Batch style: 2–4 questions, each tied to a named fundamental outcome.*
 
@@ -114,18 +154,35 @@ optics library has precedent — "Previous lenses solved this two ways…"*
 
 ### Phase 3 — Grind
 
-The machine drafts the complete lens: all eight anatomy components,
-written as a lens definition in the house style of the optics library.
-The draft is presented whole — the co-creator reads the actual glass,
-not a summary of it.
+The machine drafts the complete lens: all anatomy components, written
+as a lens definition in the house style of the optics library. The
+draft is presented whole — the co-creator reads the actual glass, not
+a summary of it.
+
+**The draft is the question.** In Session 1 the draft elicited more and
+better corrections than any confirmation question — GN-007 emerged from
+reading the draft and its test emission. Confirmation works by the
+co-creator reading the glass and pushing back where it scatters light
+wrongly.
+
+**The open-item ledger.** Any question the draft surfaces but the
+co-creator hasn't answered is recorded in the draft's Notes as an
+OPEN ITEM — not re-asked, not guessed. When the co-creator returns to
+it (or answers it unprompted), the item flips to RESOLVED with the
+decision recorded. Silence is information; the ledger keeps it honest.
 
 Corrections loop back into Phase 2 where they belong.
 
 ### Phase 4 — Test light
 
-The lens is tested with real scattering before it is shelved:
+**CHECKPOINT B.** The lens is tested with real scattering before it is
+shelved as active:
 
-1. Take a genuine sample of the raw input (or the closest available).
+1. Take a sample of the raw input. **Provenance ordering:** a genuine
+   sample from the co-creator's life > a sample the co-creator chooses
+   > a sample the grinder dreams up. Grinder-synthesized light is
+   second-best and must be **adversarial by construction** — stressing
+   refusals, edges, and fused asks, not the happy path.
 2. Run it through the new lens using the house execution model —
    the lens prompt is copied to the co-creator's agent, the emission
    is pasted back.
@@ -135,7 +192,9 @@ The lens is tested with real scattering before it is shelved:
 
 The glass is reground until the emission is focused. **This phase is
 where clarity is actually verified** — a lens has never been tested
-until real light has passed through it.
+until real light has passed through it. If an edge discipline (e.g.
+boundary gates) was not reached by the test light, say so in the test
+record — an untested edge is an honest gap, not a pass.
 
 ### Phase 5 — Polish & shelve
 
@@ -167,8 +226,13 @@ and is revisable on field evidence via harvest notes.
 
 ### Phase 6 — Harvest (generalizability)
 
-After every session, the machine explicitly asks itself — and surfaces
-to the co-creator — one question:
+Harvest actually happens **continuously** — Session 1 produced notes
+from Phase 0, Batch 2, Batch 3, and post-test alike. The rule: harvest
+whenever the spark appears, index at the sweep. Phase 6 is the
+end-of-session sweep, not the only moment of harvesting.
+
+At the sweep, the machine explicitly asks itself — and surfaces to the
+co-creator — one question:
 
 > *What did we learn here that is not specific to this lens?*
 
@@ -229,6 +293,20 @@ definition + harvest notes).
 Prism therefore improves through its own optics: every lens it grinds
 is an emission of the meta-lens, and every harvest note is light that
 was not lost.
+
+**The machine's own rating.** The bootstrap lens is not cheap glass.
+Holding Level M vs R, maintaining the established-ground ledger across
+interleaved phases, applying the harvest laws mid-session, and
+self-correcting on the co-creator's corrections is recursive multi-turn
+discipline. Per `02-intelligence-rating.md`:
+
+> **Minimum agent:** L4 · frontier-class (~70B+)
+> **Rating basis:** abstraction-level discipline plus multi-phase state
+> and behavioural constraints held across an open-ended co-creation loop
+
+A lesser agent cannot run the machine. This is stated plainly so no one
+attempts to grind lenses with a runner that cannot hold the loop —
+scattered glass is worse than no glass.
 
 ---
 
