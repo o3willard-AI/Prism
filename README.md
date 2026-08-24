@@ -99,6 +99,23 @@ scripts/stop.sh
 
 Requires only Python 3.10+ and curl. No pip installs.
 
+## Web-server portability
+
+Prism must run — and be proven to run — behind Caddy **and** at least
+one other lightweight local web service. Caddy is the reference server
+(the whole stack uses it); the second server proves nothing in Prism
+depends on Caddy-specific behaviour. Proven combinations:
+
+| Server | Front door | API proxying |
+|---|---|---|
+| Caddy (reference) | `http://localhost:8080/prism/` | `handle /prism/api/*` → :8082 |
+| Apache 2.4 | `http://localhost/prism/` | `ProxyPass /prism/api/` → :8082 |
+
+The Apache vhost lives in `server/apache-prism.conf` (Alias +
+mod_proxy_http; a one-time `setfacl u:www-data:x` on the home directory
+lets Apache traverse to the workspace). The Python backends are
+identical in both setups — only the front-door config differs.
+
 ## Status
 
 This repository is a refactored early proof of concept. The PM-toolkit-era
