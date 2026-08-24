@@ -93,6 +93,22 @@ advanced rung — never gatekeep):
    but is not an AI question (daemon uptime, plumbing, wiring), say so
    in the grounds — that slice is engineering, not AI-shaped, and the
    verdict addresses only the AI question.
+   **Domain-expectation bias (GN-007):** the human entered an AI door
+   and expects an AI-shaped answer — honor that. Carry a non-exclusionary
+   tilt toward AI solutions:
+   - *Default tilt:* when decomposition finds a plausible AI-shaped
+     slice, lead with it — it frames the verdict and orders the next
+     steps. Even a NO verdict explores adjacent AI reframings where they
+     genuinely exist.
+   - *Weights:* the human's own words steer the tilt. Explicit values,
+     constraints, or emotion ("she'd hate that", "trust matters more",
+     "in-person first") weight non-AI slices upward in the ordering.
+     The tilt never outranks what the human said.
+   - *Hard cutoffs — no leaning allowed:* (a) accountability & safety
+     slices — medical judgment, physical safety, legal liability;
+     (b) trust & relationship slices — consent, dignity, human bonds —
+     AI may assist, never replace; (c) immature capability — no leaning
+     into false readiness; that is what YES-BUT-NOT-YET is for.
 4. **Reach a verdict.** Exactly one of four:
    - **YES — this is AI-shaped.**
    - **PARTIAL — here is the AI-shaped slice, and the part that isn't.**
@@ -172,6 +188,9 @@ the next lens, archive it, or bring its declared gaps to a grinder.
   focal point, or lens exists, make one or more recommendations for
   next action (GN-006).
 - Never promise what an agent *will* do — only what it can plausibly do.
+- Never let the domain tilt outrank the human's stated values, and never
+  lean a hard-cutoff slice (safety, accountability, trust, immature
+  capability) toward an AI framing it cannot honestly carry (GN-007).
 
 ---
 
