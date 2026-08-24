@@ -328,6 +328,27 @@
   .wf-send-btn {
     height: 38px; padding: 0 16px; border-radius: 8px; flex-shrink: 0;
   }
+  /* ── Staging area: prepared prompt + door row (lenscraft/05) ────────── */
+  .wf-stage { margin-top: 10px; border: 1px solid #313244; border-radius: 10px;
+    overflow: hidden; background: #1e1e2e; }
+  .wf-stage-head { display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 12px; background: rgba(255,255,255,0.06); }
+  .wf-stage-label { font-size: 11px; font-weight: 600; color: #cdd6f4; }
+  .wf-stage-hint { font-size: 10.5px; color: #a6adc8; font-style: italic; }
+  .wf-stage-text { display: block; width: 100%; box-sizing: border-box; border: none;
+    outline: none; resize: vertical; background: #1e1e2e; color: #cdd6f4;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+    line-height: 1.5; padding: 12px; min-height: 90px; max-height: 340px; }
+  .wf-stage-doors { display: flex; gap: 8px; padding: 8px 12px; align-items: center;
+    flex-wrap: wrap; background: rgba(255,255,255,0.06); }
+  .wf-door { padding: 5px 12px; border-radius: 7px; border: 1px solid #45475a;
+    background: #313244; color: #cdd6f4; font-size: 12px; cursor: pointer;
+    font-family: var(--font); }
+  .wf-door:hover { background: #45475a; }
+  .wf-door:disabled { opacity: 0.6; cursor: wait; }
+  .wf-stage-saved { font-size: 11.5px; color: #a6e3a1; }
+  .wf-stage-open { font-size: 11.5px; color: #89b4fa; cursor: pointer;
+    text-decoration: underline; background: none; border: none; padding: 0; }
   .wf-typing {
     display: flex; align-items: center; gap: 6px;
     font-size: 13px; color: var(--text-secondary); font-style: italic;
@@ -1998,7 +2019,7 @@ function _chatRender(area) {
   _chatScrollBottom();
 }
 
-function _chatBubbleHtml(msg) {
+function _chatBubbleHtml(msg, idx) {
   const label = msg.role === 'agent' ? '🤖 Agent' : '👤 You';
   const chips  = (msg.attachments || []).map(a =>
     `<span class="wf-attach-chip">📎 ${escHtml(a.name)}</span>`
@@ -2012,13 +2033,36 @@ function _chatBubbleHtml(msg) {
         .replace(/\n/g, '<br>')
     : escHtml(msg.text).replace(/\n/g, '<br>');
 
-  // Code block for skill prompts
-  const codeHtml = msg.codeBlock
-    ? `<div style="margin-top:10px">
-         <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px;font-weight:600">📋 COPY THIS PROMPT → paste into your AI agent:</div>
-         <pre style="background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:8px;font-size:11.5px;overflow-x:auto;white-space:pre-wrap;line-height:1.5">${escHtml(msg.codeBlock)}</pre>
-       </div>`
-    : '';
+  // Staging area: prepared prompt, editable, with a door row.
+  // Delivery channels — see lenscraft/05-delivery-channels.md:
+  //   Copy (channel 1) · Save as file -> vault/prompts/ (channel 2) ·
+  //   Send-to-X appears only when a service is configured (channel 3).
+  let codeHtml = '';
+  if (msg.codeBlock) {
+    const doors = [
+      `<button class="wf-door" id="wf-stage-copy-${idx}" onclick="_stageCopy(${idx})">📋 Copy</button>`,
+    ];
+    if (msg.stageSavedPath) {
+      doors.push(
+        `<span class="wf-stage-saved">✓ vault/${escHtml(msg.stageSavedPath)}</span>`,
+        `<button class="wf-stage-open" onclick="_stageOpen(${idx})">open</button>`
+      );
+    } else {
+      doors.push(
+        `<button class="wf-door" id="wf-stage-save-${idx}" onclick="_stageSave(${idx})">💾 Save as file</button>`
+      );
+    }
+    codeHtml = `
+      <div class="wf-stage">
+        <div class="wf-stage-head">
+          <span class="wf-stage-label">📋 Prepared prompt</span>
+          <span class="wf-stage-hint">editable — steering welcome</span>
+        </div>
+        <textarea class="wf-stage-text" id="wf-stage-${idx}" spellcheck="false"
+          oninput="_stageEdit(${idx}, this)">${escHtml(msg.codeBlock)}</textarea>
+        <div class="wf-stage-doors">${doors.join('')}</div>
+      </div>`;
+  }
 
   // Post-processing option buttons
   const isPostProc = msg.role === 'agent' && _chat.wfStep === 'post-processing'
@@ -2047,6 +2091,57 @@ function _chatKeydown(e) {
 function _chatAutoResize(el) {
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+// ── Staging area door handlers (lenscraft/05-delivery-channels.md) ─────────
+
+function _stageEdit(idx, el) {
+  // Steering: edits to the prepared prompt update the message in place.
+  if (_chat.messages[idx]) _chat.messages[idx].codeBlock = el.value;
+}
+
+async function _stageCopy(idx) {
+  // Channel 1 — human handoff via clipboard.
+  const msg = _chat.messages[idx];
+  if (!msg) return;
+  try {
+    await navigator.clipboard.writeText(msg.codeBlock);
+    toast('✅ Prompt copied — paste it into your AI agent');
+  } catch (e) {
+    // Fallback: select the staging text so Ctrl+C works.
+    const ta = document.getElementById('wf-stage-' + idx);
+    if (ta) { ta.focus(); ta.select(); toast('Clipboard blocked — prompt selected, press Ctrl+C', true); }
+  }
+}
+
+async function _stageSave(idx) {
+  // Channel 2 — filesystem handoff: file the prompt into vault/prompts/.
+  const msg = _chat.messages[idx];
+  if (!msg) return;
+  const btn = document.getElementById('wf-stage-save-' + idx);
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    const r = await apiPost('/prompt', {
+      prompt: msg.codeBlock,
+      lens:   _chat.workflowId || '',
+      step:   _chat.wfStep || '',
+      title:  (_chat.artifactTitle || 'prompt'),
+    });
+    msg.stageSavedPath = r.path;
+    toast('✅ Filed to vault/' + r.path);
+    const t = document.getElementById('wf-thread');
+    if (t) { t.innerHTML = _chat.messages.map(_chatBubbleHtml).join(''); _chatScrollBottom(); }
+    _chatScheduleSave();
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Save as file'; }
+    toast(e.message, true);
+  }
+}
+
+function _stageOpen(idx) {
+  // Point at the filed prompt in the file viewer.
+  const msg = _chat.messages[idx];
+  if (msg && msg.stageSavedPath) openFile(msg.stageSavedPath, 'content-area');
 }
 
 function _chatSend() {
@@ -2411,7 +2506,8 @@ function _wfRatStructurePrompt(path, name, content) {
 }
 
 
-
+
+
 
 // ── Chat Auto-Save & Pause Checkpoint ──────────────────────────────────────
 

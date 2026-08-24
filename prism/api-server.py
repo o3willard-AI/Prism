@@ -723,6 +723,43 @@ Then
                 "artifact_type": artifact_type
             })
 
+        elif path == "/prompt":
+            # File a prepared prompt into vault/prompts/ (delivery channel 2:
+            # filesystem handoff). See lenscraft/05-delivery-channels.md and
+            # prism/vault/prompts/README.md.
+            body = self.read_body()
+            if not body or not (body.get("prompt") or "").strip():
+                return self.send_error_json(400, "prompt required")
+
+            prompt   = body["prompt"].strip()
+            lens     = (body.get("lens") or "").strip()
+            step     = (body.get("step") or "").strip()
+            title    = (body.get("title") or "prompt").strip()
+
+            date_str   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            safe_title = re.sub(r"[^\w\-]", "-", title.lower())[:40].strip("-") or "prompt"
+            filename   = f"{date_str}-{safe_title}.md"
+            rel_path   = f"prompts/{filename}"
+            # Never overwrite — append a counter if the name is taken
+            n = 1
+            while (DATA_ROOT / rel_path).exists():
+                rel_path = f"prompts/{date_str}-{safe_title}-{n}.md"
+                n += 1
+
+            prompt_content = f"""**Lens:** {lens or "—"}
+**Step:** {step or "—"}
+**Status:** prepared
+**Prepared:** {date_str}
+
+---
+
+{prompt}
+"""
+            err = write_file(rel_path, prompt_content)
+            if err:
+                return self.send_error_json(400, err)
+            self.send_json(200, {"ok": True, "path": rel_path})
+
         elif path == "/emit":
             body = self.read_body()
             if not body:
