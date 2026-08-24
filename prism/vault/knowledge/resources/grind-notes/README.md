@@ -11,3 +11,4 @@ the co-creator opts in.
 | GN-003 | Offer the advanced framing; never gatekeep | Every session, entrance design |
 | GN-004 | Dual-axis unresolved gate: resource boundary (80%) vs knowledge boundary (97%) | Any lens with loops or verdicts |
 | GN-005 | Living lenses and declared missing focal points | Routing design, maintenance, UI planning |
+| GN-006 | No dead ends — every emission leaves the human holding a next action | Every lens, universal |
