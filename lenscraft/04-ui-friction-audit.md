@@ -109,10 +109,23 @@ Auto Name exists but is a button press, not a default. Every lens item
 demands a naming decision before anything else happens. (Contrast the
 grind-loop finding: naming should be easy — here it gates the flow.)
 
-### F5 — No search, no keyboard navigation
-Only two keyboard handlers exist (Enter in two fields). No global
+### F5 — No search, no keyboard navigation ✅ resolved 24 Aug 2026
+~~Only two keyboard handlers exist (Enter in two fields). No global
 search across the vault, no keyboard-driven navigation. As the lens
-library and emissions grow, findability becomes the dominant friction.
+library and emissions grow, findability becomes the dominant friction.~~
+
+**Fix:** one palette over the whole vault, reachable by Ctrl+K (or Cmd+K)
+from anywhere or the topbar button. Backend `GET /search?q=&scope=` —
+deterministic full-text scan (no index, no LLM): every term must appear
+(AND), scored filename > frontmatter head > content, with one-line
+snippets. Machinery stays invisible: `_templates` and session sidecars
+never surface. Frontend: 150ms-debounced live results with stale-query
+race guard, ↑↓/Enter/Esc keyboard navigation, term highlighting
+(escaped — no HTML injection), and per-hit routing: lens files open in
+their own view panel; generic vault files (emissions, prompts,
+ingestion…) land in the knowledge viewer with the topbar retitled to
+the file's real home (GN-009). Verified end-to-end by
+`scripts/e2e-verify-f5.js` (36 checks).
 
 ### F6 — Desktop-only assumption
 Zero @media queries anywhere. Whether this is a defect depends on use

@@ -210,6 +210,58 @@
   #toast.show { opacity: 1; }
   #toast.error { background: #dc2626; }
 
+  /* ── F5: Search palette (Ctrl+K) ────────────────────── */
+  .kbd-inline, .search-footer kbd, .search-input-row kbd, kbd {
+    font-family: var(--font-mono); font-size: 10.5px; color: var(--text-secondary);
+    background: #f3f4f6; border: 1px solid var(--border); border-bottom-width: 2px;
+    border-radius: 4px; padding: 1px 5px; white-space: nowrap;
+  }
+  .kbd-inline { margin-left: 6px; }
+  #search-open-btn { flex-shrink: 0; }
+  .search-overlay {
+    position: fixed; inset: 0; z-index: 9000;
+    background: rgba(15,23,42,0.45); backdrop-filter: blur(2px);
+    display: flex; justify-content: center; align-items: flex-start;
+    padding-top: 12vh;
+  }
+  .search-palette {
+    width: min(640px, 92vw); background: var(--bg-card);
+    border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 16px 48px rgba(15,23,42,0.28);
+    overflow: hidden; display: flex; flex-direction: column;
+    max-height: 70vh;
+  }
+  .search-input-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 16px; border-bottom: 1px solid var(--border);
+  }
+  .search-input-row .search-icon { font-size: 15px; }
+  .search-input-row input {
+    flex: 1; border: none; outline: none; font-size: 15px;
+    font-family: var(--font); background: transparent; color: var(--text-primary);
+  }
+  .search-results { overflow-y: auto; padding: 6px; }
+  .search-hit {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 12px; border-radius: 8px; cursor: pointer;
+  }
+  .search-hit.sel { background: #eff4ff; }
+  .search-hit .sh-icon { font-size: 15px; flex-shrink: 0; margin-top: 2px; }
+  .search-hit .sh-body { flex: 1; min-width: 0; }
+  .search-hit .sh-title { font-size: 13.5px; font-weight: 600; }
+  .search-hit .sh-title mark { background: #fde68a; border-radius: 2px; padding: 0 1px; }
+  .search-hit .sh-meta { font-size: 11.5px; color: var(--text-secondary); margin-top: 2px; }
+  .search-hit .sh-snippet { font-size: 12px; color: var(--text-secondary); margin-top: 3px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .search-hit .sh-snippet mark { background: #fde68a; border-radius: 2px; padding: 0 1px; }
+  .search-hit .sh-status { font-size: 10.5px; flex-shrink: 0; margin-top: 3px; }
+  .search-empty { padding: 24px 16px; text-align: center; color: var(--text-secondary); font-size: 13px; }
+  .search-footer {
+    display: flex; gap: 16px; padding: 8px 16px;
+    border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-secondary);
+  }
+  .search-footer span { display: flex; align-items: center; gap: 4px; }
+
   /* ── Section headers ─────────────────────────────────── */
   .section-header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
   .section-header h3 { font-size: 16px; font-weight: 700; flex: 1; }
@@ -469,10 +521,28 @@
 <div id="main">
   <div class="topbar">
     <h2 id="topbar-title">Front Door</h2>
+    <button class="btn btn-ghost btn-sm" id="search-open-btn" onclick="openSearchPalette()">
+      🔍 Search <span class="kbd-inline">Ctrl K</span>
+    </button>
     <div class="topbar-actions" id="topbar-actions"></div>
   </div>
   <div class="content-area" id="content-area">
     <div class="loading-block"><div class="spinner"></div></div>
+  </div>
+</div>
+
+<!-- ── F5: Search palette (Ctrl+K) ──────────────────────────────────────── -->
+<div class="search-overlay" id="search-overlay" style="display:none" onclick="if(event.target===this)closeSearchPalette()">
+  <div class="search-palette">
+    <div class="search-input-row">
+      <span class="search-icon">🔍</span>
+      <input id="search-input" type="text" autocomplete="off" spellcheck="false"
+        placeholder="Search the vault — lens files, knowledge, workflows, emissions…"
+        oninput="_searchOnInput()" onkeydown="_searchOnKeydown(event)">
+      <kbd>Esc</kbd>
+    </div>
+    <div class="search-results" id="search-results"></div>
+    <div class="search-footer"><span>↑↓ navigate</span><span>Enter open</span><span>Esc close</span></div>
   </div>
 </div>
 
@@ -533,6 +603,162 @@ function nav(el, view) {
   document.getElementById('topbar-actions').innerHTML = '';
   renderView(view);
 }
+
+// Awaitable nav — search results must not race the view render (F5).
+async function gotoView(view) {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const target = document.querySelector(`[data-view="${view}"]`);
+  if (target) target.classList.add('active');
+  document.getElementById('topbar-title').textContent = VIEW_TITLES[view] || view;
+  document.getElementById('topbar-actions').innerHTML = '';
+  await renderView(view);
+}
+
+// ── F5: Global search (Ctrl+K) ─────────────────────────────────────────────
+// Findability is the dominant friction as lenses and emissions accumulate.
+// One palette over the whole vault; every hit routes to its own surface.
+
+const _SEARCH_ROUTE = {
+  hypotheses:       { icon: '🔬', view: 'hypotheses',       open: p => openHypInPanel(p) },
+  requirements:     { icon: '📋', view: 'requirements',     open: p => openReqInPanel(p) },
+  rationalizations: { icon: '🧩', view: 'rationalizations', open: p => openRatInPanel(p) },
+  workflows:        { icon: '⚙️', view: 'workflows',        open: p => openWorkflowFile(p) },
+  knowledge:        { icon: '📚', view: 'knowledge',        open: p => openFile(p, 'knowledge-content') },
+};
+const _SEARCH_FALLBACK = { icon: '📄', view: 'knowledge', open: p => openFile(p, 'knowledge-content') };
+const _SEARCH_ICONS = { emissions: '⬡', prompts: '📝', ingestion: '📂', decisions: '🧭',
+  archive: '🗄', experiments: '🧪', maintenance: '🔧', source: '📦', stakeholders: '👥' };
+
+let _search = { results: [], sel: 0, timer: null, open: false };
+
+function openSearchPalette() {
+  const overlay = document.getElementById('search-overlay');
+  overlay.style.display = 'flex';
+  _search.open = true;
+  _search.sel = 0;
+  const input = document.getElementById('search-input');
+  input.value = '';
+  _searchRenderHint();
+  input.focus();
+}
+
+function closeSearchPalette() {
+  document.getElementById('search-overlay').style.display = 'none';
+  _search.open = false;
+  _search.results = [];
+  _search.sel = 0;
+}
+
+function _searchOnInput() {
+  clearTimeout(_search.timer);
+  const q = document.getElementById('search-input').value.trim();
+  if (!q) { _search.results = []; _search.sel = 0; _searchRenderHint(); return; }
+  _search.timer = setTimeout(() => _searchRunQuery(q), 150);
+}
+
+async function _searchRunQuery(q) {
+  try {
+    const data = await apiGet(`/search?q=${encodeURIComponent(q)}`);
+    // Debounce race: a newer query may have replaced us
+    if (document.getElementById('search-input').value.trim() !== q) return;
+    _search.results = data.results || [];
+    _search.sel = 0;
+    _searchRenderHits(q);
+  } catch (e) {
+    document.getElementById('search-results').innerHTML =
+      `<div class="search-empty">⚠️ ${escHtml(e.message)}</div>`;
+  }
+}
+
+function _searchRenderHint() {
+  document.getElementById('search-results').innerHTML =
+    `<div class="search-empty">Type to search lens files, knowledge, workflows, prompts, and emissions.</div>`;
+}
+
+function _searchHighlight(text, terms) {
+  let out = escHtml(text);
+  for (const t of terms) {
+    const safe = escHtml(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (!safe) continue;
+    try { out = out.replace(new RegExp(safe, 'gi'), m => `<mark>${m}</mark>`); } catch (e) {}
+  }
+  return out;
+}
+
+function _searchRenderHits(q) {
+  const box = document.getElementById('search-results');
+  if (!_search.results.length) {
+    box.innerHTML = `<div class="search-empty">No matches for “${escHtml(q)}” in the vault.</div>`;
+    return;
+  }
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  box.innerHTML = _search.results.map((r, i) => {
+    const route = _SEARCH_ROUTE[r.folder] || _SEARCH_FALLBACK;
+    const icon = _SEARCH_ROUTE[r.folder] ? route.icon : (_SEARCH_ICONS[r.folder] || route.icon);
+    const title = r.name.replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/-/g, ' ');
+    return `<div class="search-hit${i === _search.sel ? ' sel' : ''}" data-idx="${i}"
+        onclick="_searchOpen(${i})" onmousemove="_searchHover(${i})">
+      <span class="sh-icon">${icon}</span>
+      <div class="sh-body">
+        <div class="sh-title">${_searchHighlight(title, terms)}</div>
+        <div class="sh-meta">${escHtml(r.path)}</div>
+        ${r.snippet ? `<div class="sh-snippet">${_searchHighlight(r.snippet, terms)}</div>` : ''}
+      </div>
+      ${r.status ? `<span class="sh-status badge-status badge-${escHtml(r.status)}">${escHtml(r.status)}</span>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function _searchHover(i) {
+  if (_search.sel === i) return;
+  _search.sel = i;
+  document.querySelectorAll('.search-hit').forEach((el, j) =>
+    el.classList[j === i ? 'add' : 'remove']('sel'));
+}
+
+function _searchOnKeydown(e) {
+  if (e.key === 'Escape') { e.preventDefault(); closeSearchPalette(); return; }
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (_search.results.length) _searchHover((_search.sel + 1) % _search.results.length);
+    return;
+  }
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (_search.results.length) _searchHover((_search.sel - 1 + _search.results.length) % _search.results.length);
+    return;
+  }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (_search.results.length) _searchOpen(_search.sel);
+    return;
+  }
+}
+
+async function _searchOpen(idx) {
+  const hit = _search.results[idx];
+  if (!hit) return;
+  closeSearchPalette();
+  const route = _SEARCH_ROUTE[hit.folder] || _SEARCH_FALLBACK;
+  await gotoView(route.view);
+  await route.open(hit.path);
+  // Generic files (emissions, prompts, ingestion…) land in the knowledge
+  // viewer — retitle the topbar to the file's real home (GN-009).
+  if (!_SEARCH_ROUTE[hit.folder]) {
+    const label = hit.folder.charAt(0).toUpperCase() + hit.folder.slice(1);
+    document.getElementById('topbar-title').textContent = label;
+  }
+}
+
+// Global keyboard entry point: Ctrl+K / Cmd+K opens the palette from
+// anywhere, unless the user is already typing somewhere.
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+    e.preventDefault();
+    if (_search.open) { document.getElementById('search-input').focus(); }
+    else openSearchPalette();
+  }
+});
 
 // ── Views ──────────────────────────────────────────────────────────────────
 

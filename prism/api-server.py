@@ -459,6 +459,87 @@ def get_status() -> dict:
     return status
 
 
+def _search_snippet(content: str, terms: list, width: int = 160) -> str:
+    """Excerpt around the first term hit, whitespace-collapsed to one line."""
+    lower = content.lower()
+    best = -1
+    for t in terms:
+        i = lower.find(t)
+        if i >= 0 and (best == -1 or i < best):
+            best = i
+    if best < 0:
+        return ""
+    # Prefer starting at the line containing the hit when it's close by
+    nl = content.rfind("\n", 0, best)
+    if nl >= 0 and best - nl <= 60:
+        start = nl + 1
+    else:
+        start = max(0, best - 40)
+    snippet = re.sub(r"\s+", " ", content[start:start + width]).strip()
+    return ("…" if start > 0 else "") + snippet
+
+
+def search_vault(q: str, scope: str | None = None, limit: int = 30) -> dict:
+    """Deterministic full-text search over the vault (F5).
+
+    Every term must appear somewhere in a file (AND semantics). Scoring:
+    term in filename +8, in frontmatter head +4, +1 per content occurrence
+    (capped at 5). Session sidecars and _templates are machinery, not
+    light — never searchable. No LLM, no index: the vault is small enough
+    to scan directly, which keeps it honest."""
+    terms = [t for t in (q or "").lower().split() if t]
+    if not terms:
+        return {"query": q or "", "results": [], "count": 0}
+    scopes = {s.strip() for s in scope.split(",") if s.strip()} if scope else None
+
+    results = []
+    for f in DATA_ROOT.rglob("*.md"):
+        rel = f.relative_to(DATA_ROOT).as_posix()
+        top = rel.split("/")[0]
+        name = f.name
+        if name.startswith("_"):
+            continue
+        if name.endswith(("-pause.md", "-chat.md")):
+            continue
+        if scopes and top not in scopes:
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        name_l, text_l = name.lower(), text.lower()
+        head = "\n".join(text.splitlines()[:15]).lower()
+        score, matched_all = 0, True
+        for t in terms:
+            hit = False
+            if t in name_l:
+                score += 8
+                hit = True
+            if t in head:
+                score += 4
+                hit = True
+            cnt = text_l.count(t)
+            if cnt:
+                score += min(cnt, 5)
+                hit = True
+            if not hit:
+                matched_all = False
+                break
+        if not matched_all:
+            continue
+        meta = parse_frontmatter(text)
+        results.append({
+            "name": name[:-3],
+            "path": rel,
+            "folder": top,
+            "status": meta.get("status") or None,
+            "score": score,
+            "snippet": _search_snippet(text, terms),
+        })
+    results.sort(key=lambda r: (-r["score"], r["path"]))
+    return {"query": q, "results": results[:limit], "count": len(results)}
+
+
 # ── Request Handler ───────────────────────────────────────────────────────────
 
 class PrismHandler(http.server.BaseHTTPRequestHandler):
@@ -559,6 +640,11 @@ class PrismHandler(http.server.BaseHTTPRequestHandler):
 
         elif path == "/lenses":
             self.send_json(200, list_lenses())
+
+        elif path == "/search":
+            q = qs.get("q", [""])[0].strip()
+            scope = qs.get("scope", [None])[0]
+            self.send_json(200, search_vault(q, scope))
 
         elif path == "/workflows":
             wf_dir = DATA_ROOT / "workflows"
