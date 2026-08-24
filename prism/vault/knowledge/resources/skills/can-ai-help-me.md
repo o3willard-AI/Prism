@@ -156,6 +156,10 @@ Produce a single structured document:
 1. <option — concrete, actionable>
 2. <option>
 
+*Order steps by what gates progress, not by domain affinity: the first
+step may lie entirely outside the AI domain — a conversation, a
+permission, a decision (GN-008).*
+
 ## Routing
 **Next lens:** <library lens name | MISSING FOCAL POINT: <description>>
 **Carry forward:** <what to pass to the next lens>

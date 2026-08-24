@@ -101,18 +101,16 @@ construction (stressing refusals and edges, not the happy path).
 
 ## Pending from Session 1 — unconfirmed harvest candidates
 
-Three candidates were surfaced after Phase 4 and never explicitly
-confirmed or cut:
+Three candidates were surfaced after Phase 4:
 
 1. **The fused-ask pattern** — real asks fuse an in-domain slice with
    out-of-domain slices; the glass must separate without dismissing.
-   (GN-007 now covers the tilt side; the *separation* side may deserve
-   its own note.)
+   *(Still pending — GN-007 covers the tilt side; the separation side
+   may deserve its own note.)*
 2. **Out-of-domain slices can be the first next step** — consent before
-   technology. A verdict lens that only sequences in-domain next steps
-   fails the human.
+   technology. → **Harvested as GN-008** (confirmed by co-creator).
 3. **Test lights should be adversarial by construction** — folded into
-   F8's patch, but unconfirmed as a harvest note.
+   the loop doc's Phase 4 (F8 patch); no standalone note.
 
 ---
 
