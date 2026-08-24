@@ -87,6 +87,10 @@ advanced rung — never gatekeep):
    Use first-principles reasoning as the engine. If
    `knowledge/research/ai-capability-boundaries.md` is provided, use it
    to sharpen edges — never to replace your decomposition.
+   **Separate capability from engineering:** if a component is buildable
+   but is not an AI question (daemon uptime, plumbing, wiring), say so
+   in the grounds — that slice is engineering, not AI-shaped, and the
+   verdict addresses only the AI question.
 4. **Reach a verdict.** Exactly one of four:
    - **YES — this is AI-shaped.**
    - **PARTIAL — here is the AI-shaped slice, and the part that isn't.**
@@ -148,6 +152,13 @@ description of the needed glass (this feeds the library's gap register).
 Always state what to carry forward so the next lens receives focused
 input, not the original fog.
 
+**Physical form (default focal point):** the verdict document is written
+as a markdown file into the default focal point —
+`prism/vault/emissions/`, filename `YYYY-MM-DD-can-ai-help-me-<slug>.md`.
+The runner additionally delivers the verdict to the user directly, with
+an actionable recommendation for what to do with the file: carry it to
+the next lens, archive it, or bring its declared gaps to a grinder.
+
 ### Behavioural constraints — never-list
 
 - Never absorb the next lens's job — verdict and routing only (GN-002).
@@ -166,6 +177,7 @@ input, not the original fog.
 
 | Emission | What to do next |
 |---|---|
+| All verdicts | File lands at the default focal point (`prism/vault/emissions/`); the runner recommends its next move to the user |
 | YES / PARTIAL with routing to an existing lens | Hand the carry-forward block to that lens |
 | Routing declares MISSING FOCAL POINT | Record the gap; ask a lens grinder to add the lens — or learn to grind it yourself |
 | NO | Take the recommended alternative framings or human paths forward |
@@ -183,6 +195,7 @@ input, not the original fog.
   shifts (GN-005).
 - The four-verdict set exists because AI capability is changing daily:
   YES-BUT-NOT-YET is an honest band, not a hedge.
-- OPEN ITEM (unresolved at grind time): whether the Routing block should
-  also carry a machine-parseable structure for agent runners. Drafted
-  structured-but-readable; co-creator to confirm.
+- RESOLVED (Session 1, co-creator): emission physical form is a markdown
+  file at the default focal point plus a direct recommendation to the
+  user for what to do with it. No machine-parseable routing payload —
+  structured-but-readable stands.
