@@ -127,9 +127,16 @@ ingestion…) land in the knowledge viewer with the topbar retitled to
 the file's real home (GN-009). Verified end-to-end by
 `scripts/e2e-verify-f5.js` (36 checks).
 
-### F6 — Desktop-only assumption
-Zero @media queries anywhere. Whether this is a defect depends on use
-context; as stated, the glass only exists on wide screens.
+### F6 — Desktop-only assumption ✅ closed by design 24 Aug 2026
+~~Zero @media queries anywhere. Whether this is a defect depends on use
+context; as stated, the glass only exists on wide screens.~~
+
+**Decision:** Prism is desktop-local by design, and stays that way.
+Mobile users don't run Prism on a phone — they wouldn't have a
+local model of any useful size there anyway; they grab the *emitted
+artifacts* from a website instead. The emitted markdown files are the
+mobile deliverable; the workbench is the desktop artifact. Not a
+defect, not a TODO — a scope boundary.
 
 ### F7 — The front door is PM-era chrome
 The dashboard leads with dwell-time bars and review counts — metrics of
@@ -187,10 +194,21 @@ the human has spoken. Verified end-to-end by
 `scripts/e2e-verify-f10.js` (29 checks), including the inferred type
 landing in the saved artifact's provenance header.
 
-### F11 — Maintainer friction
-One 2,753-line HTML file containing all JS and CSS. Syntax checking
+### F11 — Maintainer friction ✅ resolved 24 Aug 2026
+~~One 2,753-line HTML file containing all JS and CSS. Syntax checking
 requires extracting the script block and running node on it (per
-COPILOT-CONTEXT). Editing the machine is itself high-friction.
+COPILOT-CONTEXT). Editing the machine is itself high-friction.~~
+
+**Fix:** the working definition of "self-contained" was settled first —
+*copy the directory, it runs* — and three files satisfy that as well as
+one. The SPA is now `prism/index.html` (structure, 104 lines) +
+`prism/prism.css` (all component styles) + `prism/app.js` (all logic),
+linked with plain `<link>` / `<script src>` — no build step, no npm,
+served byte-identical behind both Caddy and Apache. `app.js` is now
+directly `node --check`-able; every e2e harness loads it as a real file
+instead of extracting an inline block. The single-file form survives as
+the story of the tool; the machinery got honest. All five regression
+suites re-run green against the split build.
 
 ---
 
@@ -211,3 +229,18 @@ button).
 the human inside their own thought. Every control that pulls them into
 the machine's bookkeeping — naming, classifying, saving, finding,
 deciding which door — is friction against the glass.
+
+---
+
+## Closure — 24 Aug 2026
+
+All eleven items are settled: F1, F2, F3, F4, F5, F7, F8, F9, F10,
+F11 resolved with fixes verified by the regression harnesses under
+`scripts/e2e-verify*.js`; F6 closed as a scope boundary (desktop-local
+by design; mobile users consume emitted artifacts via a website, not by
+running Prism on a phone). The design law candidate above was confirmed
+by every fix in the column: each one returned a bookkeeping task to the
+machine and handed the human only a confirm-or-correct moment.
+
+The audit is closed. Future friction gets recorded as a new session's
+audit, not appended here.

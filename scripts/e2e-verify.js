@@ -19,9 +19,7 @@ const fs = require('fs');
 const vm = require('vm');
 
 const html = fs.readFileSync('/home/sblanken/workspace/Prism/prism/index.html', 'utf8');
-const m = html.match(/<script>([\s\S]*?)<\/script>/);
-if (!m) { console.error('no script tag'); process.exit(1); }
-const script = m[1];
+const script = fs.readFileSync('/home/sblanken/workspace/Prism/prism/app.js', 'utf8');
 
 // ── DOM stub ──────────────────────────────────────────────────────────────
 class El {

@@ -19,7 +19,7 @@ const path = require('path');
 const vm = require('vm');
 
 const html = fs.readFileSync(path.join(process.cwd(), 'prism/index.html'), 'utf8');
-const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+const script = fs.readFileSync(path.join(process.cwd(), 'prism/app.js'), 'utf8');
 
 class El {
   constructor(id) {
@@ -82,38 +82,38 @@ const PROSE = `so basically the ${TOKEN} export feature keeps failing whenever t
   await sleep(800);   // boot IIFE settles
 
   // ── 1) Source-level consolidation facts ──────────────────────────────────
-  const ingestCallSites = (html.match(/apiPost\('\/ingest'/g) || []).length;
+  const ingestCallSites = (script.match(/apiPost\('\/ingest'/g) || []).length;
   check('exactly ONE /ingest call site in the whole SPA', ingestCallSites === 1);
   check('that call site lives inside ingestArtifact',
-    /function ingestArtifact[\s\S]{0,400}apiPost\('\/ingest'/.test(html));
+    /function ingestArtifact[\s\S]{0,400}apiPost\('\/ingest'/.test(script));
   check('deskSubmit routes through ingestArtifact',
-    /function deskSubmit[\s\S]{0,800}ingestArtifact\(/.test(html));
+    /function deskSubmit[\s\S]{0,800}ingestArtifact\(/.test(script));
   check('submitIngest routes through ingestArtifact',
-    /function submitIngest[\s\S]{0,700}ingestArtifact\(/.test(html));
+    /function submitIngest[\s\S]{0,700}ingestArtifact\(/.test(script));
   check('wizQuickIngest routes through ingestArtifact',
-    /function wizQuickIngest[\s\S]{0,900}ingestArtifact\(/.test(html));
+    /function wizQuickIngest[\s\S]{0,900}ingestArtifact\(/.test(script));
   check('no hardcoded is_private: false remains in ingest callers',
-    !/ingestArtifact\([^)]*is_private:\s*false/.test(html.replace(/\s+/g, ' ')));
+    !/ingestArtifact\([^)]*is_private:\s*false/.test(script.replace(/\s+/g, ' ')));
   check('deskFileSelect has no inline FileReader',
-    !/function deskFileSelect[\s\S]{0,700}new FileReader/.test(html));
+    !/function deskFileSelect[\s\S]{0,700}new FileReader/.test(script));
   check('handleFileSelect has no inline FileReader',
-    !/function handleFileSelect[\s\S]{0,1000}new FileReader/.test(html));
+    !/function handleFileSelect[\s\S]{0,1000}new FileReader/.test(script));
   check('handleQIFileSelect has no inline FileReader',
-    !/function handleQIFileSelect[\s\S]{0,700}new FileReader/.test(html));
+    !/function handleQIFileSelect[\s\S]{0,700}new FileReader/.test(script));
 
   // ── 2) Visible private controls exist on every surface ──────────────────
+  // (The templates live in app.js now — F11 split the single file.)
   await run('renderDesk(document.getElementById("content-area"))');
   check('desk renders a visible private checkbox',
     String(byId['content-area'].innerHTML || '').includes('desk-private') || true);
-  // the desk HTML is a template string inside renderDesk — check the source
   check('desk template carries the private checkbox',
-    /id="desk-private"/.test(html));
+    /id="desk-private"/.test(script));
   check('desk label names the consequence',
-    /desk-private[\s\S]{0,200}exclude from source copies and repo pushes/.test(html));
+    /desk-private[\s\S]{0,200}exclude from source copies and repo pushes/.test(script));
   check('quick-ingest template carries the private checkbox',
-    /id="qi-private"/.test(html));
+    /id="qi-private"/.test(script));
   check('Ingest page keeps the private toggle',
-    /id="private-toggle"/.test(html));
+    /id="private-toggle"/.test(script));
 
   // ── 3) ingestArtifact contract ───────────────────────────────────────────
   check('ingestArtifact exists', run('typeof ingestArtifact') === 'function');

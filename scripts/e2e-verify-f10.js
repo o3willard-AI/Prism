@@ -18,7 +18,7 @@ const path = require('path');
 const vm = require('vm');
 
 const html = fs.readFileSync(path.join(process.cwd(), 'prism/index.html'), 'utf8');
-const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+const script = fs.readFileSync(path.join(process.cwd(), 'prism/app.js'), 'utf8');
 
 class El {
   constructor(id) {
@@ -174,11 +174,11 @@ const PROSE = `so basically the ${TOKEN} export feature keeps failing whenever t
 
   // old hardcoded extension lists are gone from the source
   check('deskFileSelect has no hardcoded ext list',
-    !/deskFileSelect[\s\S]{0,900}\['js','ts','py'/.test(html));
+    !/deskFileSelect[\s\S]{0,900}\['js','ts','py'/.test(script));
   check('handleFileSelect has no hardcoded ext list',
-    !/handleFileSelect[\s\S]{0,1400}\['mp3','mp4'/.test(html));
+    !/handleFileSelect[\s\S]{0,1400}\['mp3','mp4'/.test(script));
   check('handleQIFileSelect has no hardcoded ext list',
-    !/handleQIFileSelect[\s\S]{0,900}\['mp3','mp4'/.test(html));
+    !/handleQIFileSelect[\s\S]{0,900}\['mp3','mp4'/.test(script));
 
   // ── 6) End-to-end: desk submit carries the inferred type ─────────────────
   // Lens creation only accepts text artifacts, so the e2e path uses prose

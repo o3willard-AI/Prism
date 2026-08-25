@@ -30,7 +30,9 @@ Prism is the lens, not the laser.
 ```
 prism/                  The app
 ├── api-server.py       Python stdlib HTTP backend, port 8082 (no deps)
-├── index.html          Single-file SPA frontend (vanilla JS, no build step)
+├── index.html          SPA structure (markup only — 104 lines)
+├── prism.css           All component styles
+├── app.js              All logic (vanilla JS; node --check-able)
 ├── layout/ theme/      Separable structural + visual styling
 └── vault/              All data is plain Markdown — git-syncable
     ├── ingestion/      Raw input queue (unprocessed/ is local-only)
