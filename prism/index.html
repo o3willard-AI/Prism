@@ -863,6 +863,12 @@ async function renderDesk(area) {
         </details>
         <div id="desk-type-hint" style="font-size:11.5px;color:var(--text-secondary);margin-top:6px"></div>
 
+        <label style="display:flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer;font-size:12.5px;color:var(--text-secondary);user-select:none">
+          <input type="checkbox" id="desk-private" onchange="_deskPrivate = this.checked"
+            style="width:auto;accent-color:#f59e0b">
+          🔒 Private — exclude from source copies and repo pushes
+        </label>
+
         <div class="form-label" style="margin-top:18px;margin-bottom:8px">Route it through a lens:</div>
         <div class="desk-doors" id="desk-doors">${lensDoors}</div>
         <div id="desk-error" style="color:#dc2626;font-size:13px;margin-top:10px"></div>
@@ -889,20 +895,15 @@ async function renderDesk(area) {
 
 function deskFileSelect(files) {
   if (!files?.length) return;
-  const file = files[0];
-  const reader = new FileReader();
-  reader.onload = e => {
-    _desk.content = e.target.result;
+  readTextFile(files[0], (content, file) => {
+    _desk.content = content;
     _desk.fileLoaded = file.name;
-    document.getElementById('desk-content').value = _desk.content;
+    document.getElementById('desk-content').value = content;
     document.getElementById('desk-drop-label').textContent = '✅ ' + file.name + ' loaded';
-    // F10: infer the type from filename + content (replaces the old
-    // hardcoded extension list). Human override stays sticky.
+    // F10: infer the type from filename + content. Sticky human override.
     const surface = _classifySurfaces.desk;
     if (surface) { surface.filename = file.name; _classifyTrigger(surface); }
-  };
-  reader.onerror = () => toast('Could not read file.', true);
-  reader.readAsText(file);
+  });
 }
 
 function deskLensDoor(lensKey) {
@@ -921,14 +922,15 @@ async function deskSubmit() {
   const lensKey = _desk.lens;
   const ingType = _desk.type;
 
-  // 1. Ingest the fog into the unprocessed queue
+  // 1. Ingest the fog into the unprocessed queue — through the ONE shared
+  //    path (F9), with the desk's own visible private decision.
   let ing;
   try {
-    ing = await apiPost('/ingest', {
+    ing = await ingestArtifact({
       type: ingType,
       title: autoName(cfg.seedWord),
       content,
-      is_private: false,
+      is_private: _deskPrivate,
     });
   } catch (e) { errEl.textContent = e.message; return; }
 
@@ -943,6 +945,7 @@ async function deskSubmit() {
   const lensPath = r.path;
   const lensTitle = lensPath.split('/').pop().replace('.md','').replace(/^\d{4}-\d{2}-\d{2}-/,'');
   _desk = { content: '', type: 'unordered', lens: null, fileLoaded: null };
+  _deskPrivate = false;   // F9: private decision resets with the desk
   toast('✅ ' + cfg.noun + ' created');
   renderWorkflowChat(document.getElementById('content-area'), {
     title:         cfg.noun + ' Workflow',
@@ -965,6 +968,37 @@ function updateBadges(s) {
   document.getElementById('badge-hyp').textContent = b.hypotheses || '–';
   document.getElementById('badge-req').textContent = b.requirements || '–';
   document.getElementById('badge-rat').textContent = b.rationalizations || '–';
+}
+
+// ── F9: one ingest path, one private decision ──────────────────────────────
+// Three surfaces (Refraction Desk, Ingest page, wizard quick-ingest) each
+// used to build their own /ingest payload — and had already silently
+// diverged: two hardcoded is_private:false, dropping the privacy boundary
+// the user never saw. Now a single builder is the only way an artifact
+// enters the vault, and every surface passes an explicit is_private it
+// owns. There is no default — the flag must be named.
+//
+// Per-surface private state; each owns a visible control:
+let _deskPrivate = false;   // Refraction Desk (checkbox)
+let _qiPrivate   = false;   // wizard quick-ingest (checkbox)
+// The Ingest page keeps its existing _isPrivate toggle (defined below).
+
+async function ingestArtifact({ type, title, content, is_private }) {
+  if (!content || !content.trim()) throw new Error('Content cannot be empty.');
+  if (!title   || !title.trim())   throw new Error('Please add a title.');
+  return apiPost('/ingest', {
+    type, title: title.trim(), content: content.trim(), is_private: !!is_private,
+  });
+}
+
+// Shared dropped-file loader — every ingest surface reads files the same way
+// (F9: three inline FileReader copies were the raw material the drift came
+// from; one loader means they can't diverge again).
+function readTextFile(file, onLoad) {
+  const reader = new FileReader();
+  reader.onload = e => onLoad(e.target.result, file);
+  reader.onerror = () => toast('Could not read file.', true);
+  reader.readAsText(file);
 }
 
 // ── Ingest ─────────────────────────────────────────────────────────────────
@@ -1078,10 +1112,7 @@ function togglePrivate() {
 
 function handleFileSelect(files) {
   if (!files || files.length === 0) return;
-  const file = files[0];
-  const reader = new FileReader();
-  reader.onload = e => {
-    const content = e.target.result;
+  readTextFile(files[0], (content, file) => {
     document.getElementById('ing-content').value = content;
 
     // Auto-populate title from filename (strip extension, humanize)
@@ -1099,9 +1130,7 @@ function handleFileSelect(files) {
     const loaded = document.getElementById('dz-loaded');
     loaded.textContent = `✅ ${file.name} loaded (${(file.size/1024).toFixed(1)} KB)`;
     loaded.style.display = 'block';
-  };
-  reader.onerror = () => toast('Could not read file.', true);
-  reader.readAsText(file);
+  });
 }
 
 async function submitIngest() {
@@ -1115,7 +1144,7 @@ async function submitIngest() {
 
   status.textContent = 'Saving…';
   try {
-    const r = await apiPost('/ingest', { type, title, content, is_private: _isPrivate });
+    const r = await ingestArtifact({ type, title, content, is_private: _isPrivate });
     status.textContent = '';
     document.getElementById('ing-title').value   = '';
     document.getElementById('ing-content').value = '';
@@ -1817,6 +1846,11 @@ async function renderWizStep2(area) {
           <textarea class="form-textarea" id="qi-content"
             placeholder="Or paste content here…"
             style="min-height:72px;font-size:12.5px;margin-bottom:8px"></textarea>
+          <label style="display:flex;align-items:center;gap:7px;margin-bottom:8px;cursor:pointer;font-size:12px;color:var(--text-secondary);user-select:none">
+            <input type="checkbox" id="qi-private" onchange="_qiPrivate = this.checked"
+              style="width:auto;accent-color:#f59e0b">
+            🔒 Private — exclude from repo syncs
+          </label>
           <button class="btn btn-ghost btn-sm" style="width:100%" onclick="wizQuickIngest()">
             📥 Ingest &amp; auto-select
           </button>
@@ -1889,10 +1923,8 @@ async function updateGenesisPreview(path) {
 
 function handleQIFileSelect(files) {
   if (!files?.length) return;
-  const file = files[0];
-  const reader = new FileReader();
-  reader.onload = e => {
-    document.getElementById('qi-content').value = e.target.result;
+  readTextFile(files[0], (content, file) => {
+    document.getElementById('qi-content').value = content;
     if (!document.getElementById('qi-title').value)
       document.getElementById('qi-title').value = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
     // F10: classify via the shared backend instead of a local ext list
@@ -1901,8 +1933,7 @@ function handleQIFileSelect(files) {
     const loaded = document.getElementById('qi-dz-loaded');
     loaded.textContent = `✅ ${file.name}`;
     loaded.style.display = 'block';
-  };
-  reader.readAsText(file);
+  });
 }
 
 async function wizQuickIngest() {
@@ -1914,10 +1945,13 @@ async function wizQuickIngest() {
   if (!content) { toast('Content cannot be empty.', true); return; }
   statusEl.textContent = 'Ingesting…';
   try {
-    const r = await apiPost('/ingest', { type, title, content, is_private: false });
+    // F9: same shared path, same explicit private flag (previously
+    // hardcoded false — the privacy boundary silently did not exist here).
+    const r = await ingestArtifact({ type, title, content, is_private: _qiPrivate });
     statusEl.textContent = '';
     _wiz.artifact = { path: r.path };
-    toast('✅ Ingested — auto-selected');
+    const privLabel = r.private ? ' 🔒 private' : '';
+    toast('✅ Ingested — auto-selected' + privLabel);
     renderWizardStep(document.getElementById('content-area'));
   } catch(e) {
     statusEl.textContent = '';

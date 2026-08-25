@@ -149,11 +149,24 @@ an integration is configured — then it reappears as a live affordance
 (delivery-channel / emission-focal-point architecture: doors appear
 when they can be opened, never as dead placeholders).
 
-### F9 — Duplicated ingest paths with silent divergence
-The Ingest page and the wizard quick-ingest are near-duplicate forms —
+### F9 — Duplicated ingest paths with silent divergence ✅ resolved 24 Aug 2026
+~~The Ingest page and the wizard quick-ingest are near-duplicate forms —
 and they have already diverged: quick-ingest hardcodes `is_private:
 false`. The private option is silently unavailable on the wizard path.
-Duplication is maintenance friction that becomes user-visible drift.
+Duplication is maintenance friction that becomes user-visible drift.~~
+
+**Fix:** three divergent forms became one shared path with explicit
+decisions. `ingestArtifact()` is now the ONLY way an artifact enters
+the vault (one `/ingest` call site in the whole SPA); every surface
+passes an explicit `is_private` it owns — there is no default. The
+desk and wizard quick-ingest gained visible private checkboxes (the
+privacy boundary they had silently lost), the Ingest page keeps its
+toggle. The three inline FileReader copies collapsed into one shared
+`readTextFile()` loader. Private artifacts get the `-private` suffix,
+`**Private:** yes` header, and no `source/` mirror — verified end-to-end
+by `scripts/e2e-verify-f9.js` (35 checks). F10 had already unified the
+type-classification rule across the three surfaces; F9 unifies the
+payload and the privacy boundary.
 
 ### F10 — Self-classification at ingest ✅ resolved 24 Aug 2026
 ~~The human must classify their own artifact (formatted / unordered /
