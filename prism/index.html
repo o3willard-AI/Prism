@@ -852,7 +852,7 @@ async function renderDesk(area) {
         </div>
 
         <details style="margin-top:14px">
-          <summary class="form-label" style="font-size:12px;cursor:pointer">Input shape (optional — defaults to brain dump; the lens will confirm)</summary>
+          <summary class="form-label" style="font-size:12px;cursor:pointer">Input shape (auto-detected from the text — adjust if Prism guessed wrong)</summary>
           <select class="form-select" id="desk-type" onchange="_desk.type = this.value" style="max-width:320px;margin-top:8px">
             <option value="unordered">📝 Unordered text / brain dump</option>
             <option value="formatted">📄 Formatted or ordered text</option>
@@ -861,6 +861,7 @@ async function renderDesk(area) {
             <option value="code">💻 Code</option>
           </select>
         </details>
+        <div id="desk-type-hint" style="font-size:11.5px;color:var(--text-secondary);margin-top:6px"></div>
 
         <div class="form-label" style="margin-top:18px;margin-bottom:8px">Route it through a lens:</div>
         <div class="desk-doors" id="desk-doors">${lensDoors}</div>
@@ -876,6 +877,14 @@ async function renderDesk(area) {
   zone.addEventListener('drop', e => {
     e.preventDefault(); zone.classList.remove('drag-over'); deskFileSelect(e.dataTransfer.files);
   });
+
+  // F10: auto-classify desk input as it is typed or file-loaded.
+  _classifySurfaces.desk = {
+    selectId: 'desk-type', contentId: 'desk-content', hintId: 'desk-type-hint',
+    filename: _desk.fileLoaded || '', seq: 0, touched: false, timer: null, lastKey: null,
+    onClassified: v => { _desk.type = v; },
+  };
+  _classifyWire(_classifySurfaces.desk);
 }
 
 function deskFileSelect(files) {
@@ -886,10 +895,11 @@ function deskFileSelect(files) {
     _desk.content = e.target.result;
     _desk.fileLoaded = file.name;
     document.getElementById('desk-content').value = _desk.content;
-    const ext = file.name.toLowerCase().split('.').pop();
-    if (['js','ts','py','go','rb','java','css','html'].includes(ext)) _desk.type = 'code';
-    document.getElementById('desk-type').value = _desk.type;
     document.getElementById('desk-drop-label').textContent = '✅ ' + file.name + ' loaded';
+    // F10: infer the type from filename + content (replaces the old
+    // hardcoded extension list). Human override stays sticky.
+    const surface = _classifySurfaces.desk;
+    if (surface) { surface.filename = file.name; _classifyTrigger(surface); }
   };
   reader.onerror = () => toast('Could not read file.', true);
   reader.readAsText(file);
@@ -993,6 +1003,7 @@ function renderIngest(area) {
             <option value="code">💻 Code</option>
             <option value="dictation">🎤 Dictation</option>
           </select>
+          <div id="ing-type-hint" style="font-size:11.5px;color:var(--text-secondary);margin-top:5px"></div>
         </div>
 
         <div class="form-group">
@@ -1042,6 +1053,14 @@ function renderIngest(area) {
     zone.classList.remove('drag-over');
     handleFileSelect(e.dataTransfer.files);
   });
+
+  // F10: auto-classify the legacy ingest form too — same rules, same
+  // sticky override, one shared backend.
+  _classifySurfaces.ing = {
+    selectId: 'ing-type', contentId: 'ing-content', hintId: 'ing-type-hint',
+    filename: '', seq: 0, touched: false, timer: null, lastKey: null,
+  };
+  _classifyWire(_classifySurfaces.ing);
 }
 
 function togglePrivate() {
@@ -1071,15 +1090,10 @@ function handleFileSelect(files) {
       titleEl.value = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
     }
 
-    // Auto-detect type from file extension and name hints
-    const lower = file.name.toLowerCase();
-    const ext   = lower.split('.').pop();
-    const typeEl = document.getElementById('ing-type');
-    if (['mp3','mp4','wav','mov','avi','png','jpg','jpeg','gif','webp','svg'].includes(ext)) typeEl.value = 'media';
-    else if (['ppt','pptx','xls','xlsx','pdf','sketch','fig','ai'].includes(ext)) typeEl.value = 'application';
-    else if (['js','ts','py','go','rb','java','css','html','json','yaml','yml','sh'].includes(ext)) typeEl.value = 'code';
-    else if (lower.includes('dictation') || lower.includes('transcript') || lower.includes('voice')) typeEl.value = 'dictation';
-    else if (['md','rtf'].includes(ext)) typeEl.value = 'formatted';
+    // F10: type comes from the classifier (filename + content), replacing
+    // the old hardcoded extension/name-hint list. Sticky human override.
+    const surface = _classifySurfaces.ing;
+    if (surface) { surface.filename = file.name; _classifyTrigger(surface); }
 
     // Show loaded indicator
     const loaded = document.getElementById('dz-loaded');
@@ -1787,6 +1801,7 @@ async function renderWizStep2(area) {
               <option value="code">💻 Code</option>
               <option value="dictation">🎤 Dictation</option>
             </select>
+            <div id="qi-type-hint" style="font-size:11px;color:var(--text-secondary);margin-top:4px"></div>
           </div>
           <div class="form-group" style="margin-bottom:10px">
             <input class="form-input" id="qi-title" type="text"
@@ -1830,6 +1845,14 @@ async function renderWizStep2(area) {
   zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
   zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('drag-over'); handleQIFileSelect(e.dataTransfer.files); });
 
+  // F10: quick-ingest gets the same classifier (this was the divergent
+  // third copy of ingest — now all three share one backend rule).
+  _classifySurfaces.qi = {
+    selectId: 'qi-type', contentId: 'qi-content', hintId: 'qi-type-hint',
+    filename: '', seq: 0, touched: false, timer: null, lastKey: null,
+  };
+  _classifyWire(_classifySurfaces.qi);
+
   if (sel) updateGenesisPreview(sel);
 }
 
@@ -1872,11 +1895,9 @@ function handleQIFileSelect(files) {
     document.getElementById('qi-content').value = e.target.result;
     if (!document.getElementById('qi-title').value)
       document.getElementById('qi-title').value = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
-    const ext = file.name.split('.').pop().toLowerCase();
-    const t = document.getElementById('qi-type');
-    if (['mp3','mp4','wav','mov','png','jpg','jpeg','gif','webp'].includes(ext)) t.value = 'media';
-    else if (['ppt','pptx','xls','xlsx','pdf'].includes(ext)) t.value = 'application';
-    else if (['js','ts','py','go','rb','java','css'].includes(ext)) t.value = 'code';
+    // F10: classify via the shared backend instead of a local ext list
+    const surface = _classifySurfaces.qi;
+    if (surface) { surface.filename = file.name; _classifyTrigger(surface); }
     const loaded = document.getElementById('qi-dz-loaded');
     loaded.textContent = `✅ ${file.name}`;
     loaded.style.display = 'block';
@@ -3592,6 +3613,87 @@ function _chatStopSpeech() {
 
 function setTopbarAction(html) {
   document.getElementById('topbar-actions').innerHTML = html;
+}
+
+// ── F10: Auto-classification at ingest ────────────────────────────────────
+// The lens system's own philosophy: classification is agent work. The UI
+// used to ask the human to classify their own thought at every ingest
+// surface. Now the machine infers from the text itself and the human only
+// confirms-or-corrects — and their correction is final (state is sticky).
+//
+// Backend: POST /classify {content, filename} -> {type, confidence, basis}
+
+const _TYPE_ICONS = {
+  unordered: '📝', formatted: '📄', dictation: '🎤',
+  media: '🎬', application: '📦', code: '💻',
+};
+
+// One live state object per ingest surface (rebuilt each render).
+let _classifySurfaces = {};
+
+// Debounced classification per surface. state:
+//   { selectId, hintId, seq, touched, timer, lastKey }
+async function _classifyRun(surface) {
+  const selectEl = document.getElementById(surface.selectId);
+  if (!selectEl) return;
+  const contentEl = document.getElementById(surface.contentId);
+  const content = contentEl ? contentEl.value : '';
+  const filename = surface.filename || '';
+  const key = content.length + ':' + content.slice(0, 200) + ':' + filename;
+  if (key === surface.lastKey) return;   // nothing changed since last run
+  surface.lastKey = key;
+
+  // Skip near-empty input — don't classify ghosts
+  if (content.trim().length < 12 && !filename) {
+    _classifyHint(surface, '');
+    return;
+  }
+
+  const mySeq = ++surface.seq;
+  try {
+    const r = await apiPost('/classify', { content, filename });
+    if (mySeq !== surface.seq) return;   // a newer input superseded us
+    if (!r.type) return;
+    if (!surface.touched) {
+      selectEl.value = r.type;
+      // some surfaces may lack an option (desk has no 'application')
+      if (selectEl.value !== r.type) selectEl.value = 'unordered';
+      // keep local state in sync for surfaces that read a JS var
+      if (surface.onClassified) surface.onClassified(selectEl.value);
+    }
+    _classifyHint(surface, r);
+  } catch (e) { /* classification is advisory — never block ingest */ }
+}
+
+function _classifyHint(surface, r) {
+  const el = document.getElementById(surface.hintId);
+  if (!el) return;
+  if (!r || !r.type) { el.innerHTML = ''; return; }
+  const icon = _TYPE_ICONS[r.type] || '📄';
+  const conf = r.confidence === 'high' ? '' :
+    ` <span style="opacity:.7">(${r.confidence})</span>`;
+  const basis = (r.basis || []).map(b => escHtml(b.split(': ').slice(1).join(': '))).join(' · ');
+  el.innerHTML = `${icon} detected <strong>${r.type}</strong>${conf}${basis ? ` — ${basis}` : ''}`;
+}
+
+function _classifyWire(surface, extra) {
+  const fire = () => _classifyTrigger(surface);
+  const contentEl = document.getElementById(surface.contentId);
+  if (contentEl) contentEl.addEventListener('input', fire);
+  const selectEl = document.getElementById(surface.selectId);
+  if (selectEl) {
+    selectEl.addEventListener('change', () => {
+      surface.touched = true;   // human override wins — stop auto-setting
+      if (surface.onClassified) surface.onClassified(selectEl.value);
+    });
+  }
+  if (extra) extra(fire);
+  fire();
+}
+
+function _classifyTrigger(surface) {
+  clearTimeout(surface.timer);
+  surface.timer = setTimeout(() => _classifyRun(surface), 350);
 }
 
 function parseMarkdownMeta(content) {

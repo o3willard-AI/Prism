@@ -155,11 +155,24 @@ and they have already diverged: quick-ingest hardcodes `is_private:
 false`. The private option is silently unavailable on the wizard path.
 Duplication is maintenance friction that becomes user-visible drift.
 
-### F10 — Self-classification at ingest
-The human must classify their own artifact (formatted / unordered /
+### F10 — Self-classification at ingest ✅ resolved 24 Aug 2026
+~~The human must classify their own artifact (formatted / unordered /
 dictation / …). File-based detection exists; pasted text gets no
 inference. The lens system's own philosophy says classification is
-agent work — the UI asks the human to do it.
+agent work — the UI asks the human to do it.~~
+
+**Fix:** `POST /classify` — deterministic type inference from the text
+itself plus filename (no LLM): code-shaped lines, CSV/tabular rows,
+markdown headers/bullets, numbered lists, spoken-fillers for
+dictation, prose-sentence density for unordered; every verdict carries
+a human-readable basis. All three ingest surfaces (refraction desk,
+legacy Ingest page, wizard quick-ingest) now share this ONE backend
+rule — the three divergent hardcoded extension lists are deleted. As
+you type, the type select fills itself and a hint shows the reasoning;
+a manual override is sticky — the machine stops second-guessing once
+the human has spoken. Verified end-to-end by
+`scripts/e2e-verify-f10.js` (29 checks), including the inferred type
+landing in the saved artifact's provenance header.
 
 ### F11 — Maintainer friction
 One 2,753-line HTML file containing all JS and CSS. Syntax checking

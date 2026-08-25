@@ -540,6 +540,111 @@ def search_vault(q: str, scope: str | None = None, limit: int = 30) -> dict:
     return {"query": q, "results": results[:limit], "count": len(results)}
 
 
+def classify_artifact(content: str, filename: str = "") -> dict:
+    """Infer the artifact type from raw input (F10).
+
+    Classification is lens work — asking the human to classify their own
+    thought is the machine pushing its bookkeeping onto the user. Pure
+    deterministic heuristics, every verdict carries its basis so the
+    human can confirm or override at a glance. No LLM."""
+    text = content or ""
+    lower = text.lower()
+    name = (filename or "").lower()
+    ext = name.rsplit(".", 1)[-1] if "." in name else ""
+    reasons = []
+    score = {"unordered": 0, "formatted": 0, "code": 0,
+             "dictation": 0, "media": 0, "application": 0}
+
+    def bump(kind, pts, why):
+        score[kind] += pts
+        reasons.append(f"{kind} +{pts}: {why}")
+
+    # ── Filename hints (strongest signal — the human already named it) ──
+    if ext in ("mp3", "mp4", "wav", "mov", "avi", "png", "jpg", "jpeg",
+               "gif", "webp", "svg", "m4a", "ogg"):
+        bump("media", 10, f"media extension .{ext}")
+    elif ext in ("ppt", "pptx", "xls", "xlsx", "pdf", "sketch", "fig", "ai"):
+        bump("application", 10, f"application extension .{ext}")
+    elif ext in ("js", "ts", "py", "go", "rb", "java", "css", "html",
+                 "json", "yaml", "yml", "sh", "c", "cpp", "rs"):
+        bump("code", 8, f"code extension .{ext}")
+    elif ext in ("csv", "tsv"):
+        bump("formatted", 8, f"tabular extension .{ext}")
+    for hint in ("dictation", "transcript", "voice", "speech", "audio-log"):
+        if hint in name:
+            bump("dictation", 9, f"filename mentions '{hint}'")
+            break
+
+    # ── Content signals ─────────────────────────────────────────────────
+    lines = [l for l in text.splitlines()]
+    nonblank = [l for l in lines if l.strip()]
+    n = len(nonblank)
+
+    # Code markers
+    code_markers = 0
+    for l in nonblank[:60]:
+        s = l.strip()
+        if s.startswith(("#!", "//", "/*", "*", "import ", "from ", "def ",
+                         "class ", "function ", "const ", "var ", "let ",
+                         "package ", "#include", "<", "<?")):
+            code_markers += 1
+        if s.endswith(("{", "}", ";", ":", ")")) and ("=" in s or "(" in s):
+            code_markers += 0.5
+    if code_markers >= 4:
+        bump("code", 4 + min(code_markers, 6), f"{code_markers:.0f} code-shaped lines")
+
+    # CSV-ish: repeated delimited rows
+    if n >= 3:
+        comma_rows = sum(1 for l in nonblank[:40] if l.count(",") >= 2)
+        tab_rows = sum(1 for l in nonblank[:40] if "\t" in l)
+        if comma_rows / min(n, 40) >= 0.7 and comma_rows >= 3:
+            bump("formatted", 8, f"{comma_rows} comma-delimited rows")
+        elif tab_rows / min(n, 40) >= 0.7 and tab_rows >= 3:
+            bump("formatted", 8, f"{tab_rows} tab-delimited rows")
+
+    # Markdown-ish structure → formatted
+    md_headers = sum(1 for l in nonblank[:40] if l.startswith("#"))
+    md_bullets = sum(1 for l in nonblank[:40] if l[:2] in ("- ", "* ") or l[:3] in ("1. ", "2. "))
+    if md_headers >= 2 or (md_headers >= 1 and md_bullets >= 2):
+        bump("formatted", 6, f"{md_headers} headers, {md_bullets} list items")
+
+    # Numbered/ordered lines → formatted
+    numbered = sum(1 for l in nonblank[:40] if re.match(r"^\s*\d+[.)]\s", l))
+    if numbered >= 3:
+        bump("formatted", 5, f"{numbered} numbered lines")
+
+    # Prose → unordered (or dictation if conversational). Works on the
+    # whole text, not per line — a brain dump is often one long line.
+    sentences = re.findall(r"[.!?]+(?:\s|$)", text)
+    total_chars = len(text.strip())
+    fillers = sum(lower.count(w) for w in
+                  (" um,", " uh,", " you know,", " like,", " so yeah", " anyways"))
+    if fillers >= 2:
+        bump("dictation", 7, f"{fillers} spoken-fillers ('um', 'uh', …)")
+    if n >= 2:
+        avg_len = len(text) / n
+        lowercase_starts = sum(1 for l in nonblank[:40]
+                               if l[:1].isalpha() and l[:1].islower())
+        if lowercase_starts / min(n, 40) >= 0.5 and avg_len > 60:
+            bump("dictation", 5, "most lines start lowercase (spoken flow)")
+    if len(sentences) >= 3 and total_chars >= 120 and md_headers == 0 and code_markers < 2:
+        bump("unordered", 5, f"{len(sentences)} prose sentences, no structure")
+
+    if not reasons:
+        return {"type": "unordered", "confidence": "default",
+                "basis": ["no strong signals — defaulting to unordered text"]}
+
+    # Pick winner; ties break toward the least specific (unordered)
+    order = ["unordered", "formatted", "code", "dictation", "media", "application"]
+    best = max(order, key=lambda k: score[k])
+    if score[best] == 0:
+        best = "unordered"
+    confidence = "high" if score[best] >= 8 else ("medium" if score[best] >= 4 else "low")
+    # Only report reasons for the winning kind
+    basis = [r for r in reasons if r.startswith(best)] or reasons[:2]
+    return {"type": best, "confidence": confidence, "basis": basis}
+
+
 # ── Request Handler ───────────────────────────────────────────────────────────
 
 class PrismHandler(http.server.BaseHTTPRequestHandler):
@@ -1077,6 +1182,16 @@ Then
             if shape_key not in VERIFY_SHAPES:
                 return self.send_error_json(400, f"shape must be one of: {', '.join(sorted(VERIFY_SHAPES))}")
             self.send_json(200, verify_output(shape_key, body["content"]))
+
+        elif path == "/classify":
+            # F10: infer the artifact type from raw input. Deterministic
+            # heuristics — classification is lens work, not the human's.
+            body = self.read_body()
+            if body is None:
+                return self.send_error_json(400, "Invalid JSON")
+            content = body.get("content", "") or ""
+            filename = body.get("filename", "") or ""
+            self.send_json(200, classify_artifact(content, filename))
 
         elif path == "/prompt":
             # File a prepared prompt into vault/prompts/ (delivery channel 2:
