@@ -6,6 +6,7 @@
 **Output:** Either (A) a numbered inquiry list, or (B) a full PRD in the Industry-Standard 2026 Framework.
 **Confidence gate:** The agent must be 95%+ certain of the full scope before generating a PRD. Below that threshold it **must** ask questions instead.
 
+**Crafting method:** not recorded (pre-LCM)
 ---
 
 ## When to Use This Skill

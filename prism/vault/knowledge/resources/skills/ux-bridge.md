@@ -5,6 +5,7 @@
 **Trigger:** Invoke when a PM has a feature or UX request and needs to produce a complete "UX Hand-off Specification" — the agent interviews the PM until all mandatory UX fields are satisfied at ≥95% confidence, then generates the final spec.
 **Output:** A finalised UX Hand-off Specification structured to the mandatory fields defined in `vault/knowledge/process/ux-information-requirements.md`.
 
+**Crafting method:** not recorded (pre-LCM)
 ---
 
 ## When to Use This Skill

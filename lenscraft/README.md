@@ -16,4 +16,18 @@ not yet product surface.
                      lens: cognitive demand class (L1–L4, durable) plus a
                      provisional parameter floor; calibrated against the
                      eight reference lenses.
+03-session-1-audit.md  Session 1 audit — design vs reality: real light
+                     passed through the machine (the grind loop's own
+                     Phase 4 harvest).
+04-ui-friction-audit.md  Baseline UI friction audit (F1–F11), all items
+                     settled 24 Aug 2026; closed.
+05-delivery-channels.md  Prompt delivery architecture: clipboard, file
+                     handoff to vault/prompts/, direct API when configured.
+06-crafting-methods.md  LCM provenance contract (settled 24 Aug 2026):
+                     every lens carries pointer metadata to its Crafting
+                     Method — the complete conversation record of its
+                     crafting. Historical assets, write-once, methods
+                     never move (fork 4b), supersession markers in
+                     frontmatter. The raw material for rationalizing
+                     lens sprawl.
 ```

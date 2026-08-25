@@ -5,6 +5,7 @@
 **Trigger:** Invoke when a raw meeting transcript, recorded conversation, or multi-person discussion needs to be converted into a structured summary of business intents, decisions, and action items — before any further lens processing or handoff.
 **Output:** Five structured Actionable Blocks: Executive Summary, Key Initiatives & Deliverables, Operational & Budgetary Constraints, Secondary Considerations & Future Items, and Open Questions & Ambiguities.
 
+**Crafting method:** not recorded (pre-LCM)
 ---
 
 ## When to Use This Skill

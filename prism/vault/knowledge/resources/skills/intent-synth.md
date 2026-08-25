@@ -5,6 +5,7 @@
 **Trigger:** Invoke when processing an unordered text or dictation artifact through any Thought Lens seed flow — the agent denoises, disambiguates, and synthesizes the raw material into structured "Intention Blocks" ready for downstream processing (e.g., PRD Gate or direct lens population).
 **Output:** Five structured Intention Blocks covering objective, functional intentions, constraints, edge cases, and ambiguities.
 
+**Crafting method:** not recorded (pre-LCM)
 ---
 
 ## When to Use This Skill

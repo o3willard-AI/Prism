@@ -18,6 +18,7 @@ emission at `prism/vault/emissions/2026-08-23-can-ai-help-me-elder-parent-wellbe
 **Declared missing focal points:**
 - `setup-path` — a lens to take a YES/PARTIAL verdict and produce the actual setup path (steps, prompts, config). Does not exist in the library yet.
 
+**Crafting method:** not recorded (pre-LCM)
 ---
 
 ## When to Use This Lens

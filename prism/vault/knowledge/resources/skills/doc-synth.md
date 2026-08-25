@@ -5,6 +5,7 @@
 **Trigger:** Invoke when processing any raw, fragmented, or non-linear asset through a Prism lens or standalone synthesis flow — the agent denoises, disambiguates, and synthesizes the material into structured Synthesis Blocks ready for downstream processing (e.g., Clarification Gate or direct lens population).
 **Output:** Five structured Synthesis Blocks covering subject, key assertions, constraints, tangents, and ambiguities.
 
+**Crafting method:** not recorded (pre-LCM)
 ---
 
 ## When to Use This Skill

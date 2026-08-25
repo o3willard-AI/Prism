@@ -6,6 +6,7 @@
 **Output:** Either (A) a numbered inquiry list, or (B) a fully structured document in the format appropriate to the lens (Structured Account, Hypothesis, Experiment brief, PRD, or general ordered document).
 **Confidence gate:** The agent must be 95%+ certain of the full scope before producing output. Below that threshold it **must** ask questions instead.
 
+**Crafting method:** not recorded (pre-LCM)
 ---
 
 ## When to Use This Skill

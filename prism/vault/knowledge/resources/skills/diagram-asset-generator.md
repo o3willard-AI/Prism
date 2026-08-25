@@ -5,6 +5,7 @@
 **Trigger:** Invoke when a Prism asset (or any technical document) needs to be translated into a visual diagram — process maps, architecture topologies, data flows, sequence diagrams, swimlane flowcharts, or UML diagrams.
 **Output:** A production-ready Draw.io/Diagrams.net diagram file or editable XML — or, when the Draw.io tool is unavailable, equivalent Mermaid.js code or Draw.io XML for direct paste into Diagrams.net.
 
+**Crafting method:** not recorded (pre-LCM)
 ---
 
 ## When to Use This Skill

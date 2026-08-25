@@ -5,6 +5,7 @@
 **Trigger:** Invoke when one or more assets need to be read, contextualised relative to one another, and restructured into a highly coherent reference form (story, logical list, clear concepts, or definitive statements).
 **Output:** Finalized restructured content — or, if confidence is below 97%, a bulleted list of clarifying questions.
 
+**Crafting method:** not recorded (pre-LCM)
 ---
 
 ## When to Use This Skill

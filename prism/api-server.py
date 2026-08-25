@@ -459,6 +459,168 @@ def get_status() -> dict:
     return status
 
 
+# ── Crafting Methods (LCM provenance) ──────────────────────────────────────
+# A Crafting Method is the complete conversation record of crafting ONE
+# thought lens. Historical asset, not a living document: written once at
+# the end of the crafting session, content immutable afterwards. Every
+# lens carries pointer metadata to its method (frontmatter). Methods stay
+# in the library forever — even after the lens they produced is emitted —
+# because the use case is learning from the past as it happened, and
+# rationalizing lens sprawl needs ALL of them in one place.
+# Spec: lenscraft/06-crafting-methods.md
+
+METHODS_DIR = DATA_ROOT / "knowledge" / "resources" / "crafting-methods"
+METHOD_STATUS_FIELDS = ("Status", "Deprecation marker")
+
+
+def safe_lens_slug(name: str) -> str | None:
+    """Sanitise a lens name into a filesystem slug. None if unusable."""
+    slug = re.sub(r"[^\w\-]", "-", (name or "").strip().lower()).strip("-")
+    return slug[:60] or None
+
+
+def write_crafting_method(body: dict) -> tuple[int, dict]:
+    """Write a crafting method. Write-once: existing method → 409.
+
+    Returns (http_code, response_dict)."""
+    lens_name = (body.get("lens") or "").strip()
+    if not lens_name:
+        return 400, {"error": "lens name required"}
+    conversation = body.get("conversation")
+    if not conversation:
+        return 400, {"error": "conversation record required"}
+    if isinstance(conversation, list):
+        conversation = "\n\n".join(
+            f"**{m.get('role', 'voice')}:** {m.get('text', '')}"
+            for m in conversation if isinstance(m, dict))
+    conversation = str(conversation).strip()
+    if not conversation:
+        return 400, {"error": "conversation record required"}
+
+    slug = safe_lens_slug(lens_name)
+    if not slug:
+        return 400, {"error": "lens name unusable as filename"}
+
+    METHODS_DIR.mkdir(parents=True, exist_ok=True)
+    method_path = METHODS_DIR / f"{slug}-method.md"
+    rel_path = method_path.relative_to(DATA_ROOT).as_posix()
+    if method_path.exists():
+        return 409, {"error": "crafting method already exists — it is a historical asset, not a living document",
+                     "path": rel_path}
+
+    lens_path = (body.get("lens_path") or "").strip()
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    crafted_by = (body.get("crafted_by") or "unrecorded").strip()
+    outcome = (body.get("outcome") or "").strip() or "<!-- what this lens does — the single-best result it produced -->"
+    decisions = (body.get("decisions") or "").strip() or "<!-- key craft decisions and their rationale -->"
+
+    lens_line = (f"**Lens:** [{lens_path}]({lens_path})" if lens_path
+                 else f"**Lens:** {lens_name} (not yet shelved)")
+    content = f"""# Crafting Method: {lens_name}
+
+{lens_line}
+**Crafted:** {date_str}
+**Crafted by:** {crafted_by}
+**Status:** active
+
+---
+
+## Outcome
+
+{outcome}
+
+## Conversation record
+
+<!-- The complete conversation log of the crafting session, verbatim.
+     Historical asset: this content is never edited. Deprecation and
+     supersession are marked in the frontmatter, never here. -->
+
+{conversation}
+
+## Craft decisions
+
+{decisions}
+"""
+    err = write_file(rel_path, content)
+    if err:
+        return 400, {"error": err}
+
+    # Attach the pointer to the lens file itself, if it exists in the vault
+    attached = False
+    if lens_path:
+        lens_content, lerr = read_file(lens_path)
+        if lerr is None and "Crafting method" not in lens_content:
+            pointer = f"**Crafting method:** [{rel_path}]({rel_path})"
+            # Insert after the last frontmatter field, before the first ---
+            lines = lens_content.splitlines()
+            insert_at = None
+            for i, line in enumerate(lines):
+                if line.strip() == "---":
+                    insert_at = i
+                    break
+            if insert_at is not None:
+                lines.insert(insert_at, pointer)
+                if not write_file(lens_path, "\n".join(lines) + "\n"):
+                    attached = True
+
+    return 200, {"ok": True, "path": rel_path, "pointer_attached": attached}
+
+
+def list_crafting_methods() -> list:
+    """Every method in the library, newest first, with its frontmatter."""
+    if not METHODS_DIR.exists():
+        return []
+    methods = []
+    for f in sorted(METHODS_DIR.glob("*.md")):
+        if f.name == "README.md":
+            continue
+        meta = parse_frontmatter(f.read_text(encoding="utf-8"))
+        methods.append({
+            "name": f.stem.replace("-method", ""),
+            "path": f.relative_to(DATA_ROOT).as_posix(),
+            "lens": meta.get("lens", ""),
+            "crafted": meta.get("crafted", ""),
+            "status": meta.get("status", "active"),
+        })
+    methods.sort(key=lambda m: m["crafted"], reverse=True)
+    return methods
+
+
+def set_method_status(body: dict) -> tuple[int, dict]:
+    """Mark a method superseded/deprecated (fork 5: 'we will not return
+    here'). Content stays immutable — only the status fields change."""
+    rel = (body.get("path") or "").strip()
+    status = (body.get("status") or "").strip().lower()
+    if status not in ("active", "superseded", "deprecated"):
+        return 400, {"error": "status must be active, superseded, or deprecated"}
+    content, err = read_file(rel)
+    if err:
+        return 404, {"error": err}
+    lines = content.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("**Status:**"):
+            lines[i] = f"**Status:** {status}"
+            break
+    else:
+        return 400, {"error": "method has no Status field"}
+    marker = (body.get("marker") or "").strip()
+    if status in ("superseded", "deprecated"):
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        marker_line = f"**Deprecation marker:** {date_str}" + (f" — {marker}" if marker else "")
+        for i, line in enumerate(lines):
+            if line.startswith("**Deprecation marker:**"):
+                lines[i] = marker_line
+                break
+        else:
+            # insert right after Status
+            for i, line in enumerate(lines):
+                if line.startswith("**Status:**"):
+                    lines.insert(i + 1, marker_line)
+                    break
+    write_file(rel, "\n".join(lines) + "\n")
+    return 200, {"ok": True, "path": rel, "status": status}
+
+
 def _search_snippet(content: str, terms: list, width: int = 160) -> str:
     """Excerpt around the first term hit, whitespace-collapsed to one line."""
     lower = content.lower()
@@ -750,6 +912,18 @@ class PrismHandler(http.server.BaseHTTPRequestHandler):
             q = qs.get("q", [""])[0].strip()
             scope = qs.get("scope", [None])[0]
             self.send_json(200, search_vault(q, scope))
+
+        elif path == "/methods":
+            self.send_json(200, {"methods": list_crafting_methods()})
+
+        elif path == "/method":
+            rel = unquote(qs.get("path", [""])[0])
+            if not rel:
+                return self.send_error_json(400, "path required")
+            content, err = read_file(rel)
+            if err:
+                return self.send_error_json(404, err)
+            self.send_json(200, {"path": rel, "content": content})
 
         elif path == "/workflows":
             wf_dir = DATA_ROOT / "workflows"
@@ -1192,6 +1366,24 @@ Then
             content = body.get("content", "") or ""
             filename = body.get("filename", "") or ""
             self.send_json(200, classify_artifact(content, filename))
+
+        elif path == "/method":
+            # LCM provenance: write the crafting method at the end of a
+            # crafting session. Write-once — historical asset (fork 3).
+            body = self.read_body()
+            if body is None:
+                return self.send_error_json(400, "Invalid JSON")
+            code, resp = write_crafting_method(body)
+            self.send_json(code, resp)
+
+        elif path == "/method/status":
+            # Fork 5: supersession/deprecation markers ("we will not
+            # return here"). Content stays immutable.
+            body = self.read_body()
+            if body is None:
+                return self.send_error_json(400, "Invalid JSON")
+            code, resp = set_method_status(body)
+            self.send_json(code, resp)
 
         elif path == "/prompt":
             # File a prepared prompt into vault/prompts/ (delivery channel 2:

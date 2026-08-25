@@ -768,6 +768,37 @@ async function openFile(relPath, contentId) {
   }
 }
 
+function _extractMethodPointer(content) {
+  // Resolved pointer: **Crafting method:** [label](path)
+  const m = content.match(/\*\*Crafting method:\*\*\s*\[([^\]]+)\]\(([^)]+)\)/);
+  if (m) return { label: m[1], path: m[2] };
+  // Honest pre-LCM mark: no affordance to offer (GN-006)
+  if (/\*\*Crafting method:\*\*\s*not recorded/i.test(content)) return { pre: true };
+  return null;
+}
+
+async function openCraftingMethod(lensRelPath, contentId) {
+  // Crafting methods are historical assets — read-only by design. The only
+  // live affordances here are viewing and going back.
+  const panel = document.getElementById(contentId);
+  panel.innerHTML = '<div class="loading-block"><div class="spinner"></div></div>';
+  try {
+    const lensDoc = await apiGet(`/file?path=${encodeURIComponent(lensRelPath)}`);
+    const ptr = _extractMethodPointer(lensDoc.content);
+    if (!ptr || !ptr.path) { toast('No crafting method recorded for this lens.', true); return; }
+    const { content } = await apiGet(`/method?path=${encodeURIComponent(ptr.path)}`);
+    panel.innerHTML = `
+      <div class="editor-toolbar">
+        <span class="editor-filename">${escHtml(ptr.path)}</span>
+        <button class="btn btn-ghost btn-sm" onclick="openFile('${lensRelPath}','${contentId}')">← Back to lens</button>
+        <span class="badge" style="font-size:11px">📜 historical asset — read-only</span>
+      </div>
+      <div class="md-viewer">${marked.parse(content)}</div>`;
+  } catch (e) {
+    panel.innerHTML = `<div class="card" style="color:#dc2626">⚠️ ${e.message}</div>`;
+  }
+}
+
 function renderFileViewer(panel, relPath, content, contentId) {
   const lensMap = {
     hypotheses:      'hypotheses',
@@ -777,6 +808,13 @@ function renderFileViewer(panel, relPath, content, contentId) {
   const topFolder = relPath.split('/')[0];
   const isLens    = topFolder in lensMap && !relPath.includes('_template');
 
+  // F-provenance: method button only when the pointer resolves to a real
+  // path (GN-006 — pre-LCM lenses get no dead button).
+  const methodPtr = _extractMethodPointer(content);
+  const methodBtn = methodPtr && methodPtr.path
+    ? `<button class="btn btn-ghost btn-sm" onclick="openCraftingMethod('${relPath}','${contentId}')">📜 Crafting method</button>`
+    : '';
+
   const emitBtn = isLens
     ? `<button class="btn btn-sm" style="background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0"
          onclick="confirmEmit('${relPath}','${topFolder}','${contentId}')">⬡ Emit &amp; Archive</button>`
@@ -785,9 +823,11 @@ function renderFileViewer(panel, relPath, content, contentId) {
   const actionBtns = isLens
     ? `${emitBtn}
        <button class="btn btn-primary btn-sm" onclick="continueWorkflow('${relPath}','${topFolder}','${contentId}')">▶ Continue Workflow</button>
+       ${methodBtn}
        <button class="btn btn-ghost btn-sm" style="color:#dc2626;border-color:#fca5a5"
          onclick="confirmDeleteThought('${relPath}','${topFolder}','${contentId}')">🗑 Delete</button>`
     : `${emitBtn}
+       ${methodBtn}
        <button class="btn btn-ghost btn-sm" id="edit-toggle-btn" onclick="toggleEdit('${relPath}','${contentId}')">✏️ Edit</button>
        <button class="btn btn-primary btn-sm" id="save-btn" style="display:none" onclick="saveFile('${relPath}','${contentId}')">💾 Save</button>
        <button class="btn btn-ghost btn-sm" id="cancel-btn" style="display:none" onclick="openFile('${relPath}','${contentId}')">Cancel</button>`;
