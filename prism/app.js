@@ -35,7 +35,7 @@ function toast(msg, isError = false) {
 // ── Navigation ─────────────────────────────────────────────────────────────
 
 const VIEW_TITLES = {
-  dashboard: 'Front Door', ingest: 'Ingest Artifact',
+  dashboard: 'Crafting Table', ingest: 'Ingest Artifact',
   knowledge: 'Knowledge Base', workflows: 'Workflows', hypotheses: 'Hypotheses',
   requirements: 'Requirements',
   rationalizations: 'Rationalizations',
@@ -229,8 +229,10 @@ async function renderView(view) {
   }
 }
 
-// ── Front Door: the Refraction Desk (F7 redesign) ─────────────────────────
+// ── Crafting Table: the Refraction Desk (F7 redesign) ─────────────────────
 // One input surface — "bring fog, get focus." Not a status board.
+// Renamed from "Front Door" 25 Aug 2026: it sits under Workflows, below
+// Thought Lenses — users use lenses far more often than they craft them.
 
 let _desk = { content: '', type: 'unordered', lens: null, fileLoaded: null };
 

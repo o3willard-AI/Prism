@@ -10,11 +10,16 @@ This document is the contract the lens-crafting machine builds against.*
 - **Prism** — the product. Name is final.
 - **LCM (Lens Crafting Machine)** — Prism's super-process: the dialogue
   by which Prism and a human co-create a new thought lens.
-- **Thought lens** — the LCM's product. A prompt-engineered refraction
-  chamber (markdown, no machinery). To people who haven't experienced
-  Prism: a lens is essentially a *skill for humans*.
-- **Prism Lexicon** — the library of thought lenses
-  (`vault/knowledge/resources/skills/` + workflows).
+- **Thought lens** — a refraction chamber: a prompt-engineered lens that
+  turns raw input into focused, agent-ready context. Origin-agnostic —
+  the LCM is how NEW lenses get crafted, not what makes something a lens.
+  The three original lenses (requirements, hypotheses, rationalizations)
+  are thought lenses even though they predate the LCM. To people who
+  haven't experienced Prism: a lens is essentially a *skill for humans*.
+- **Prism Lexicon** — the library of ALL thought lenses: the three
+  originals plus everything the LCM crafts. Physically: the lens
+  workflows (`vault/workflows/<lens>-default/`) plus the skills they
+  invoke (`vault/knowledge/resources/skills/`).
 - **Crafting Method** — the complete conversation record of the process
   of crafting ONE given lens. The historical asset this document governs.
 
@@ -107,6 +112,27 @@ prompts, and verdict cards for every workflow conversation. The LCM
 grind flow — when it exists — reuses that substrate to assemble the
 conversation record at session's end. Capture machinery is ready;
 the crafting flow that produces methods is the next increment.
+
+## Optics Library (25 Aug 2026 — design direction, settled in principle)
+
+The Prism Lexicon's home may grow beyond this vault: an **Optics
+Library**, backed by a pre-configured Git/GitHub repo. The two modes:
+
+- **Loaded lenses** — present locally, usable and referenceable right
+  now. What the Lexicon holds today.
+- **Library lenses** — discoverable by searching the Optics Library
+  repo; loading one pulls it into local use.
+
+**Provenance travels:** the crafting method rolls in and rolls out side
+by side with its lens. (This does NOT conflict with fork #4: emit-time
+methods still stay in the central library — "rolls with the lens"
+governs how a lens moves between vault and library, not what happens
+at emission.) A loaded lens keeps its pointer resolvable: if the lens
+and method arrive together, the pointer resolves locally; library
+lenses carry their method so provenance survives the move.
+
+Implementation is deferred — no repo plumbing exists yet. This section
+is the settled contract the future work builds against.
 
 ## Explicit tenet amendment
 
