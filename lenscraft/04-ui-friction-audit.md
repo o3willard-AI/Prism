@@ -277,6 +277,43 @@ Options, in rough order of cost: render with a sanitizing step, disable raw
 HTML in marked's options, or accept it explicitly. **Not started — a
 product-intent call, not a mechanical fix.**
 
+### F15 — Agent and workflow docs describe a door the UI removed ✅ resolved 26 Sep 2026
+~~F8 removed the "Archive and emit to integration" button on 24 Aug 2026 and
+deleted `wfOptE()` with it, because no integration was configured. **None of
+the six documents describing that menu were updated.** All three agent
+definitions and all three workflow READMEs still specified Options A–E,
+including the execution table, the handoff table, and the capability line.
+
+This was user-facing drift, not internal tidiness: these are the files a
+human copies into their own agent, so an agent reading this vault would
+offer Option E — a door Prism cannot open. F8's own law (no dead
+affordances) was being violated by the documentation of the fix that
+removed it.~~
+
+**Three defects in one pass**, all doc-truth corrections:
+
+1. **Option E described as live** in all six files — menu block, execution
+   table, handoff table, and the "Options A–E" capability line. Now A–D, with
+   an explicit statement of *why* E is absent (no integration configured, so
+   per F8/GN-006 the door does not exist) and that it returns when one is.
+   Also fixed "Do NOT offer Option A or Option E" in the rationalizations
+   handoff gate and "upon Option A or E selection" in two Notes sections.
+2. **"Future: wire real LLM API calls"** in all three agent definitions —
+   contradicting the README and the "lens, not the laser" tenet. Replaced
+   with an explicit statement that Prism never calls a model and this is a
+   design constraint, not a missing feature, so the question stops being
+   re-asked. The claim also contained a fiction: a "placeholder 800ms
+   response" that does not exist anywhere in the code (the real delay is a
+   600ms typing-latency affordance in `_chatSend`).
+3. **Nonexistent path** `vault/knowledge/integrations-config/` referenced in
+   all three workflow READMEs. The real path is `vault/knowledge/integrations/`.
+
+**New regression suite** `scripts/e2e-verify-f15.js` (57 checks) — derives
+ground truth from `app.js` (which buttons actually exist), then asserts every
+document matches it, plus a vault-wide scan and a premise check that no
+integration config exists. It has teeth both ways: reintroducing Option E
+fails 1 check, reintroducing the bad path fails 2.
+
 ---
 
 ## The pattern in both columns
@@ -320,12 +357,19 @@ thought outside their control.
 marked) added and resolved; F14 (markdown viewer does not sanitize) added
 and left **open** pending a product-intent decision.
 
-A pattern worth naming, now that two items have landed in the same place:
-**F12 and F13 were both invisible to the friction lens.** Every UI surface
-was correct in both cases — the defects lived in a response header and in a
-`<script src>`. The audit examines the screens the human touches, and both
-sat one layer below that, in the seam between the browser and the backend. A
-future session should audit that seam deliberately, not incidentally.
+**Amendment 26 Sep 2026 (third pass):** F15 (agent and workflow docs still
+described the Option E door removed by F8) added and resolved — six files,
+three distinct defects, plus a 57-check suite that derives the real menu from
+`app.js` so the documents cannot drift from the code again.
+
+A pattern worth naming, now that three items have landed in the same place:
+**F12, F13 and F15 were all invisible to the friction lens**, and two of the
+three were invisible to *this* audit too. Every UI surface was correct in
+each case — the defects lived in a response header, in a `<script src>`, and
+in the documents describing a button that no longer exists. The audit
+examines the screens the human touches; all three sat outside that: the
+browser/backend seam, the dependency layer, and the written record. A future
+session should audit those three seams deliberately, not incidentally.
 
 Future friction gets recorded as a new session's
 audit, not appended here.
