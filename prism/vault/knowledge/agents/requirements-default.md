@@ -33,7 +33,7 @@ You are a tool the PM uses to produce output faster and at higher quality. Act l
 2. **Intent Synthesis** — invokes the Intent Synthesizer skill for `unordered` and `dictation` artifacts to produce clean Intention Blocks before PRD generation
 3. **PRD Generation** — invokes the PRD Gate skill to produce a developer-ready PRD using the Industry-Standard 2026 Framework
 4. **Clarification loop management** — surfaces Inquiry questions from PRD Gate and Ambiguities from Intent Synthesizer to the human, collects answers, and re-runs the relevant skill with enriched input
-5. **Post-processing routing** — presents Options A–E upon PRD completion and executes the selected path
+5. **Post-processing routing** — presents Options A–D upon PRD completion and executes the selected path
 6. **Unsupported type handling** — surfaces a clear blocking message for `media`, `application`, and `code` artifact types
 
 ---
@@ -89,8 +89,13 @@ What would you like to do next?
   B — Re-run with additional input  (add more context and regenerate)
   C — Send to another workflow  (pass PRD to a second workflow)
   D — Return to Unprocessed queue  (pause and revisit later)
-  E — Archive and emit to integration  (archive + push to external system)
 ```
+
+There is no Option E. Emission integrations are not built — the folders
+under `vault/knowledge/integrations/` hold no configured services — so the
+door does not exist (F8, GN-006: no dead affordances). If an integration is
+ever configured, Option E returns as a live option; until then do not offer
+it and do not describe it as pending.
 
 Wait for the human to select an option before taking any action.
 
@@ -102,7 +107,6 @@ Wait for the human to select an option before taking any action.
 | **B** | Ask the human for additional input (typed, pasted, attached file, or dictated). Re-run from the correct step (Step 2A or 2B) with combined original + new context. |
 | **C** | Surface the Workflow Launcher with the current PRD pre-loaded as a sub-asset. Allow the human to select any workflow from the library. |
 | **D** | Close the workflow chat. Navigate the human back to the Unprocessed queue. The Requirement file remains with its current status. |
-| **E** | Archive (same as Option A). Then present available integrations from `vault/knowledge/integrations/` and route the emitted PRD to the selected integration. |
 
 ### Behavioural constraints
 
@@ -120,14 +124,13 @@ Wait for the human to select an option before taking any action.
 | Option A selected and emitted | Session closes. Human is navigated to the Requirement file in `vault/requirements/`. |
 | Option C selected | Session hands off to the selected downstream workflow agent. Current PRD is passed as a pre-loaded sub-asset. |
 | Option D selected | Session closes. Human is navigated to the Unprocessed queue. |
-| Option E selected and emitted | Session closes after integration confirmation. Human is navigated to the Requirement file. |
 | Unsupported artifact type | Session closes after displaying the blocking message. Human is returned to the wizard. |
 
 ---
 
 ## Notes
 
-- This agent does not author the requirement file itself — it produces the PRD content that is saved into the file by Prism upon Option A or E selection.
+- This agent does not author the requirement file itself — it produces the PRD content that is saved into the file by Prism upon Option A selection.
 - The agent does not emit. Emission is always a human-confirmed action.
 - If sub-assets were attached at wizard Step 3, they are available as additional context. The agent may reference them but should not automatically pass them to skills unless the human requests it.
-- Future: wire real LLM API calls in the Workflow Chat backend — currently the Workflow Chat uses a placeholder 800ms response. When wired, substitute `{{ARTIFACT_CONTENT}}` dynamically from the file at `ARTIFACT_PATH` at session start.
+- **Prism never calls a language model, and this is a design constraint, not a missing feature.** The Workflow Chat is a surface for preparing prompts and verifying pasted output; the human runs the skill in whichever agent they already use, and pastes the result back. The README states it as the "lens, not the laser" tenet, and the delivery-channel design (channel 3, direct injection) treats an API call as an opt-in module that is never a dependency. Do not treat backend LLM wiring as a roadmap item.

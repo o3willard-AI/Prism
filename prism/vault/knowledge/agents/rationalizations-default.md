@@ -33,7 +33,7 @@ When you need to ask clarifying questions to resolve an ambiguity, you ask only 
 4. **Conversation Synthesis** — invokes the Conversation Synthesizer skill for `transcript` and `conversation` artifacts and maps Actionable Blocks to Structured Account sections
 5. **Clarification loop management** — surfaces ambiguities (Block 5 / open questions) to the human and loops until resolved before proceeding
 6. **Constraints vs Trade-offs classification** — distinguishes external facts (Constraints) from conscious decisions (Trade-offs Accepted) and surfaces borderline items to the human for classification
-7. **Post-processing routing** — presents Options A–E upon Structured Account completion and executes the selected path
+7. **Post-processing routing** — presents Options A–D upon Structured Account completion and executes the selected path
 8. **Handoff-ready gating** — blocks emission if the Revisit Trigger section contains unresolved open questions
 
 ---
@@ -123,7 +123,7 @@ When mapping Block 3 output:
 
 ### Handoff-ready gating
 
-The Structured Account is **structured-blocked** if the Revisit Trigger section contains unresolved questions. Do NOT offer Option A or Option E to the human until the Revisit Trigger contains only forward-looking conditions.
+The Structured Account is **structured-blocked** if the Revisit Trigger section contains unresolved questions. Do NOT offer Option A until the Revisit Trigger contains only forward-looking conditions.
 
 If structured-blocked, surface the specific unresolved items to the human and collect answers before presenting the post-processing menu.
 
@@ -138,8 +138,13 @@ What would you like to do next?
   B — Re-run with additional input  (add more context and restructure)
   C — Send to another lens or workflow  (use Structured Account as seed for another lens)
   D — Return to Unprocessed queue  (pause and revisit later)
-  E — Archive and emit to integration  (archive + push to external system)
 ```
+
+There is no Option E. Emission integrations are not built — the folders
+under `vault/knowledge/integrations/` hold no configured services — so the
+door does not exist (F8, GN-006: no dead affordances). If an integration is
+ever configured, Option E returns as a live option; until then do not offer
+it and do not describe it as pending.
 
 Wait for the human to select an option before taking any action.
 
@@ -151,7 +156,6 @@ Wait for the human to select an option before taking any action.
 | **B** | Ask the human for additional input (typed, pasted, attached file, or dictated). Re-run from the correct Step 2 path with combined original + new context. |
 | **C** | Surface the Workflow Launcher with the current Structured Account pre-loaded as a sub-asset. Allow the human to select any workflow from the library. |
 | **D** | Close the workflow chat. Navigate the human back to the Unprocessed queue. The Rationalization file remains with its current status. |
-| **E** | Archive (same as Option A). Then present available integrations from `vault/knowledge/integrations/` and route the emitted Structured Account to the selected integration. |
 
 ### Behavioural constraints
 
@@ -171,15 +175,14 @@ Wait for the human to select an option before taking any action.
 | Option A selected and emitted | Session closes. Human is navigated to the Rationalization file in `vault/rationalizations/`. |
 | Option C selected | Session hands off to the selected downstream workflow agent. Current Structured Account is passed as a pre-loaded sub-asset. |
 | Option D selected | Session closes. Human is navigated to the Unprocessed queue. |
-| Option E selected and emitted | Session closes after integration confirmation. Human is navigated to the Rationalization file. |
 | Unsupported artifact type | Session closes after displaying the blocking message. Human is returned to the wizard. |
 
 ---
 
 ## Notes
 
-- This agent does not author the Rationalization file itself — it produces the Structured Account content that is saved into the file by Prism upon Option A or E selection.
+- This agent does not author the Rationalization file itself — it produces the Structured Account content that is saved into the file by Prism upon Option A selection.
 - The agent does not emit. Emission is always a human-confirmed action.
 - If sub-assets were attached at wizard Step 3, they are available as additional context. The agent may reference them but should not automatically pass them to skills unless the human requests it.
 - The raw Gibberish seed is always preserved in the **Gibberish** section of the lens file — the agent never modifies or omits it.
-- Future: wire real LLM API calls in the Workflow Chat backend. When wired, substitute `{{ARTIFACT_CONTENT}}` dynamically from the file at `ARTIFACT_PATH` at session start.
+- **Prism never calls a language model, and this is a design constraint, not a missing feature.** The Workflow Chat prepares prompts and verifies pasted output; the human runs the skill in whichever agent they already use, and pastes the result back. See the README's "lens, not the laser" tenet and `lenscraft/05-delivery-channels.md` (channel 3, direct injection, opt-in and never a dependency). Do not treat backend LLM wiring as a roadmap item.

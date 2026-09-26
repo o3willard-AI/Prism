@@ -104,11 +104,13 @@ Close the workflow chat and navigate the PM back to the Unprocessed queue (`inge
 
 ---
 
-### Option E — Archive and emit to integration
+### Option E — not available
 
-Archive the Requirement (same as Option A) and additionally route the emitted UX Hand-off Specification to an external integration. Present the PM with the configured integrations available in `vault/knowledge/integrations-config/`. Each integration defines its own emission handling.
-
-*Use when: the spec needs to be pushed to an external system (e.g., Figma handoff, Jira ticket, Notion design brief) at the point of emission.*
+Emission integrations are not built. The folders under
+`vault/knowledge/integrations/` hold no configured services, so this door
+does not exist in the UI and has no implementation behind it (F8, GN-006: no
+dead affordances). If an integration is ever configured, Option E returns as
+a live option and this section describes what it does.
 
 ---
 
@@ -117,4 +119,4 @@ Archive the Requirement (same as Option A) and additionally route the emitted UX
 - **UX Bridge:** `vault/knowledge/resources/skills/ux-bridge.md`
 - **UX Information Requirements:** `vault/knowledge/process/ux-information-requirements.md`
 - **Product context:** `vault/knowledge/product/`
-- **Integrations config:** `vault/knowledge/integrations-config/`
+- **Integrations config:** `vault/knowledge/integrations/`

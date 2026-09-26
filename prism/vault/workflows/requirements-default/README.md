@@ -141,11 +141,13 @@ Close the workflow chat and navigate the human back to the Unprocessed queue (`i
 
 ---
 
-### Option E — Archive and emit to integration
+### Option E — not available
 
-Archive the Requirement (same as Option A) and additionally route the emitted PRD to an external integration. Present the human with the configured integrations available in `vault/knowledge/integrations-config/`. Each integration defines its own emission handling.
-
-*Use when: the PRD needs to be pushed to an external system (e.g., Jira, Linear, Notion, GitHub Issues) at the point of emission.*
+Emission integrations are not built. The folders under
+`vault/knowledge/integrations/` hold no configured services, so this door
+does not exist in the UI and has no implementation behind it (F8, GN-006: no
+dead affordances). If an integration is ever configured, Option E returns as
+a live option and this section describes what it does.
 
 ---
 
@@ -153,4 +155,4 @@ Archive the Requirement (same as Option A) and additionally route the emitted PR
 
 - **Intent Synthesizer:** `vault/knowledge/resources/skills/intent-synth.md`
 - **PRD Gate:** `vault/knowledge/resources/skills/prd-gate.md`
-- **Integrations config:** `vault/knowledge/integrations-config/`
+- **Integrations config:** `vault/knowledge/integrations/`
