@@ -210,6 +210,35 @@ instead of extracting an inline block. The single-file form survives as
 the story of the tool; the machinery got honest. All five regression
 suites re-run green against the split build.
 
+### F12 — Cross-origin write hole in the API ✅ resolved 26 Sep 2026
+~~The API answered every request with `Access-Control-Allow-Origin: *` and
+checked no `Origin` at all. Any web page open in a browser on the same
+machine could POST to `/file` and write arbitrary files inside the vault —
+including `knowledge/resources/skills/`, which is prompt text the user's own
+agent later executes, so the reachable surface included the optics
+themselves. Reads leaked the vault the same way.~~
+
+**Fix:** the API serves same-origin only and emits no CORS headers. A request
+carrying `Origin` must match the host it was sent to; a request with no
+`Origin` is a local tool (curl, the harnesses) and is allowed. Guards POST,
+DELETE and OPTIONS, and drains the request body on rejection so a refused
+request does not poison the next one on a keep-alive connection. Loopback
+name aliases are allowed only on the *same port* — a page served from
+`127.0.0.1:8092` is a different origin from the API on `:8090`, and treating
+"loopback" as sufficient would have let any other local process write to the
+vault. Documented in README under "Security posture". Verified by
+`scripts/e2e-verify-f12.js` (30 checks).
+
+**Also in this pass:** `safe_path()` had a broad `except (ValueError,
+Exception)` that masked every failure as "Path not allowed" — narrowed to the
+three exceptions it can actually raise.
+
+**Not changed, deliberately:** `/file` POST has no folder allowlist, unlike
+DELETE. The Knowledge Base convention is that agents author
+`knowledge/resources/skills/` content files, so restricting writes would
+break documented behavior. The CORS fix addresses the unauthorized-writer
+problem without narrowing the authorized one.
+
 ---
 
 ## The pattern in both columns
@@ -232,7 +261,7 @@ deciding which door — is friction against the glass.
 
 ---
 
-## Closure — 24 Aug 2026
+## Closure — 24 Aug 2026, amended 26 Sep 2026
 
 All eleven items are settled: F1, F2, F3, F4, F5, F7, F8, F9, F10,
 F11 resolved with fixes verified by the regression harnesses under
@@ -242,5 +271,13 @@ running Prism on a phone). The design law candidate above was confirmed
 by every fix in the column: each one returned a bookkeeping task to the
 machine and handed the human only a confirm-or-correct moment.
 
-The audit is closed. Future friction gets recorded as a new session's
+**Amendment 26 Sep 2026:** F12 (cross-origin write hole in the API) was
+added and resolved. It is a security item rather than a friction item, but
+it belongs in this record because the audit's own closing law — the UI's job
+is to keep the human inside their own thought — has a backend twin: a vault
+any page in the browser can write to puts the human's thought outside their
+control. Note that F12 was invisible to the friction lens: every UI surface
+was correct, the defect lived entirely in a response header.
+
+Future friction gets recorded as a new session's
 audit, not appended here.

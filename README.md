@@ -52,6 +52,24 @@ scripts/                Start/stop + Caddy download
 stdlib backends + vanilla JS. No npm, no frameworks, no external AI APIs,
 no cloud dependency.
 
+## Security posture
+
+The API binds `127.0.0.1` and is always served **same-origin** behind the
+front door, so it sends no CORS headers at all. Requests that carry an
+`Origin` header must match the host they were sent to; a request with no
+`Origin` (curl, scripts, the e2e harnesses) is treated as a local tool and
+allowed. This closes cross-origin writes to the vault — including
+`knowledge/resources/skills/`, which is prompt text the user's own agent
+later executes.
+
+Both shipped front doors must **preserve Host** (Caddy does by default;
+`server/apache-prism.conf` sets `ProxyPreserveHost On`). If a front door is
+configured not to, the guard fails closed and the app stops working rather
+than widening access — an app you can fix, versus a vault any local page can
+write.
+
+Verified by `scripts/e2e-verify-f12.js`.
+
 ## The optics
 
 `vault/knowledge/resources/skills/` contains the refraction prompts —
