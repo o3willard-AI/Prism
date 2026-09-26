@@ -34,6 +34,7 @@ prism/                  The app
 ├── prism.css           All component styles
 ├── app.js              All logic (vanilla JS; node --check-able)
 ├── layout/ theme/      Separable structural + visual styling
+├── vendor/             Third-party code, vendored + pinned (marked, MIT)
 └── vault/              All data is plain Markdown — git-syncable
     ├── ingestion/      Raw input queue (unprocessed/ is local-only)
     ├── requirements/ hypotheses/ rationalizations/ decisions/ experiments/
@@ -51,6 +52,29 @@ scripts/                Start/stop + Caddy download
 **Stack:** one Caddy binary (reverse proxy + static server) + two Python
 stdlib backends + vanilla JS. No npm, no frameworks, no external AI APIs,
 no cloud dependency.
+
+The one third-party library, `marked` (markdown rendering), is **vendored
+and pinned** at `prism/vendor/marked.min.js` — so Prism runs fully offline
+and the version cannot drift under you. See `prism/vendor/README.md` for
+provenance, the recorded sha256, and the upgrade procedure.
+
+## Security posture
+
+The API binds `127.0.0.1` and is always served **same-origin** behind the
+front door, so it sends no CORS headers at all. Requests that carry an
+`Origin` header must match the host they were sent to; a request with no
+`Origin` (curl, scripts, the e2e harnesses) is treated as a local tool and
+allowed. This closes cross-origin writes to the vault — including
+`knowledge/resources/skills/`, which is prompt text the user's own agent
+later executes.
+
+Both shipped front doors must **preserve Host** (Caddy does by default;
+`server/apache-prism.conf` sets `ProxyPreserveHost On`). If a front door is
+configured not to, the guard fails closed and the app stops working rather
+than widening access — an app you can fix, versus a vault any local page can
+write.
+
+Verified by `scripts/e2e-verify-f12.js`.
 
 ## The optics
 

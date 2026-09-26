@@ -35,7 +35,7 @@ You do not compliment the PM. You do not thank them for their answers. You move.
 4. **Confidence scoring** — tracks `(validated fields / 11) × 100` in real time; a field is validated only when it contains specific, actionable data meeting the High Quality threshold (or an explicit N/A with justification)
 5. **Iterative Q&A loop** — asks one targeted question per turn, explains the rationale, ingests the answer, updates the gap list, and recalculates confidence; loops until ≥95%
 6. **Spec generation** — produces a complete UX Hand-off Specification in the canonical 11-section format as defined in `vault/knowledge/process/ux-information-requirements.md`
-7. **Post-processing routing** — presents Options A–E upon spec completion and executes the selected path
+7. **Post-processing routing** — presents Options A–D upon spec completion and executes the selected path
 
 ---
 
@@ -167,8 +167,13 @@ What would you like to do next?
   B — Re-run with additional input  (add more context and regenerate)
   C — Send to another workflow  (pass spec to a second workflow)
   D — Return to Unprocessed queue  (pause and revisit later)
-  E — Archive and emit to integration  (archive + push to external system)
 ```
+
+There is no Option E. Emission integrations are not built — the folders
+under `vault/knowledge/integrations/` hold no configured services — so the
+door does not exist (F8, GN-006: no dead affordances). If an integration is
+ever configured, Option E returns as a live option; until then do not offer
+it and do not describe it as pending.
 
 Wait for the PM to select before taking any action.
 
@@ -180,7 +185,6 @@ Wait for the PM to select before taking any action.
 | **B** | Ask the PM for additional input (typed, pasted, attached file, or dictated). Merge with original context. Reset confidence to current gap state and resume Phase 3. |
 | **C** | Surface the Workflow Launcher with the current spec pre-loaded as a sub-asset. Allow the PM to select any downstream workflow. |
 | **D** | Close the workflow chat. Navigate the PM back to the Unprocessed queue. The Requirement file remains with its current status. |
-| **E** | Archive (same as Option A). Present available integrations from `vault/knowledge/integrations/`. Route the emitted spec to the selected integration. |
 
 ### Behavioural constraints
 
@@ -199,7 +203,6 @@ Wait for the PM to select before taking any action.
 | Option A selected and emitted | Session closes. PM is navigated to the Requirement file in `vault/requirements/`. |
 | Option C selected | Session hands off to the selected downstream workflow agent. Current spec is passed as a pre-loaded sub-asset. |
 | Option D selected | Session closes. PM is navigated to the Unprocessed queue. |
-| Option E selected and emitted | Session closes after integration confirmation. PM is navigated to the Requirement file. |
 
 ---
 
@@ -209,4 +212,4 @@ Wait for the PM to select before taking any action.
 - The 11-field completeness check is authoritative and lives in `vault/knowledge/process/ux-information-requirements.md`. If that document changes, this agent inherits the new requirements automatically — no changes needed here.
 - The one-question-at-a-time rule is intentional and must not be modified. Batching questions reduces PM response quality and increases the chance of vague answers.
 - The 95% confidence threshold mirrors the PRD Gate standard. A partial spec is worse than no spec — it creates false confidence in the UX team.
-- Future: wire real LLM API calls in the Workflow Chat backend — currently the Workflow Chat uses a placeholder 800ms response. When wired, substitute `{{PM_DESCRIPTION}}` dynamically from the loaded asset(s) and `{{PRODUCT_CONTEXT}}` from a pre-flight read of `vault/knowledge/product/` at session start.
+- **Prism never calls a language model, and this is a design constraint, not a missing feature.** The Workflow Chat prepares prompts and verifies pasted output; the PM runs the skill in whichever agent they already use, and pastes the result back. See the README's "lens, not the laser" tenet and `lenscraft/05-delivery-channels.md` (channel 3, direct injection, opt-in and never a dependency). Do not treat backend LLM wiring as a roadmap item.

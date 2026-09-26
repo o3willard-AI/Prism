@@ -210,6 +210,110 @@ instead of extracting an inline block. The single-file form survives as
 the story of the tool; the machinery got honest. All five regression
 suites re-run green against the split build.
 
+### F12 — Cross-origin write hole in the API ✅ resolved 26 Sep 2026
+~~The API answered every request with `Access-Control-Allow-Origin: *` and
+checked no `Origin` at all. Any web page open in a browser on the same
+machine could POST to `/file` and write arbitrary files inside the vault —
+including `knowledge/resources/skills/`, which is prompt text the user's own
+agent later executes, so the reachable surface included the optics
+themselves. Reads leaked the vault the same way.~~
+
+**Fix:** the API serves same-origin only and emits no CORS headers. A request
+carrying `Origin` must match the host it was sent to; a request with no
+`Origin` is a local tool (curl, the harnesses) and is allowed. Guards POST,
+DELETE and OPTIONS, and drains the request body on rejection so a refused
+request does not poison the next one on a keep-alive connection. Loopback
+name aliases are allowed only on the *same port* — a page served from
+`127.0.0.1:8092` is a different origin from the API on `:8090`, and treating
+"loopback" as sufficient would have let any other local process write to the
+vault. Documented in README under "Security posture". Verified by
+`scripts/e2e-verify-f12.js` (30 checks).
+
+**Also in this pass:** `safe_path()` had a broad `except (ValueError,
+Exception)` that masked every failure as "Path not allowed" — narrowed to the
+three exceptions it can actually raise.
+
+**Not changed, deliberately:** `/file` POST has no folder allowlist, unlike
+DELETE. The Knowledge Base convention is that agents author
+`knowledge/resources/skills/` content files, so restricting writes would
+break documented behavior. The CORS fix addresses the unauthorized-writer
+problem without narrowing the authorized one.
+
+### F13 — Unpinned CDN dependency ✅ resolved 26 Sep 2026
+~~`prism/index.html` loaded marked from
+`https://cdn.jsdelivr.net/npm/marked/marked.min.js`. Three problems with
+one line: the README claimed "no cloud dependency" while the app needed the
+network to render markdown at all; the URL was **unpinned**, so the version
+silently drifted under the user (it served 15.0.12 while `latest` was
+18.0.14) with no way to know what code had shipped; and it broke the
+"copy the directory, it runs" definition F11 settled on. Invisible to the
+friction lens too — the viewer worked fine on any machine that happened to
+be online, which is exactly why nobody hit it.~~
+
+**Fix:** marked is vendored at `prism/vendor/marked.min.js`, pinned to
+15.0.12, with its MIT licence and full provenance (source, sha256, upgrade
+procedure) in `prism/vendor/README.md`. The file is byte-identical to the
+copy in the official npm tarball, cross-checked against two independent
+sources. No build step, no npm, no network.
+
+**New regression suite** `scripts/e2e-verify-f13.js` (21 checks) — asserts
+no external URL survives in any shipped file, the vendored bytes match the
+recorded sha256, and the render path still works. That render path
+(`marked.parse` in `app.js`) had **no coverage at all** before this, so the
+suite closes that gap too — eight markdown shapes including tables, which
+vault files use heavily, plus a real vault file end to end. Verified the
+suite has teeth in both directions: restoring the CDN tag fails 4 checks;
+tampering with the vendored file fails the sha256, version and render checks.
+
+### F14 — Markdown viewer does not sanitize (open, pre-existing)
+marked v15 does not sanitize: raw HTML in a vault file is passed through
+verbatim, and `javascript:` URLs are not filtered. Both confirmed by direct
+test. This is **pre-existing** — identical with the CDN version — and is not
+introduced by F13. Today it is not a privilege boundary: vault content is
+authored by the user and by their own agent, and the F12 guard means no
+arbitrary web page can write to it. It becomes one if the vault ever ingests
+genuinely untrusted input (a shared team repo, a third-party transcript).
+Options, in rough order of cost: render with a sanitizing step, disable raw
+HTML in marked's options, or accept it explicitly. **Not started — a
+product-intent call, not a mechanical fix.**
+
+### F15 — Agent and workflow docs describe a door the UI removed ✅ resolved 26 Sep 2026
+~~F8 removed the "Archive and emit to integration" button on 24 Aug 2026 and
+deleted `wfOptE()` with it, because no integration was configured. **None of
+the six documents describing that menu were updated.** All three agent
+definitions and all three workflow READMEs still specified Options A–E,
+including the execution table, the handoff table, and the capability line.
+
+This was user-facing drift, not internal tidiness: these are the files a
+human copies into their own agent, so an agent reading this vault would
+offer Option E — a door Prism cannot open. F8's own law (no dead
+affordances) was being violated by the documentation of the fix that
+removed it.~~
+
+**Three defects in one pass**, all doc-truth corrections:
+
+1. **Option E described as live** in all six files — menu block, execution
+   table, handoff table, and the "Options A–E" capability line. Now A–D, with
+   an explicit statement of *why* E is absent (no integration configured, so
+   per F8/GN-006 the door does not exist) and that it returns when one is.
+   Also fixed "Do NOT offer Option A or Option E" in the rationalizations
+   handoff gate and "upon Option A or E selection" in two Notes sections.
+2. **"Future: wire real LLM API calls"** in all three agent definitions —
+   contradicting the README and the "lens, not the laser" tenet. Replaced
+   with an explicit statement that Prism never calls a model and this is a
+   design constraint, not a missing feature, so the question stops being
+   re-asked. The claim also contained a fiction: a "placeholder 800ms
+   response" that does not exist anywhere in the code (the real delay is a
+   600ms typing-latency affordance in `_chatSend`).
+3. **Nonexistent path** `vault/knowledge/integrations-config/` referenced in
+   all three workflow READMEs. The real path is `vault/knowledge/integrations/`.
+
+**New regression suite** `scripts/e2e-verify-f15.js` (57 checks) — derives
+ground truth from `app.js` (which buttons actually exist), then asserts every
+document matches it, plus a vault-wide scan and a premise check that no
+integration config exists. It has teeth both ways: reintroducing Option E
+fails 1 check, reintroducing the bad path fails 2.
+
 ---
 
 ## The pattern in both columns
@@ -232,7 +336,7 @@ deciding which door — is friction against the glass.
 
 ---
 
-## Closure — 24 Aug 2026
+## Closure — 24 Aug 2026, amended 26 Sep 2026
 
 All eleven items are settled: F1, F2, F3, F4, F5, F7, F8, F9, F10,
 F11 resolved with fixes verified by the regression harnesses under
@@ -242,5 +346,30 @@ running Prism on a phone). The design law candidate above was confirmed
 by every fix in the column: each one returned a bookkeeping task to the
 machine and handed the human only a confirm-or-correct moment.
 
-The audit is closed. Future friction gets recorded as a new session's
+**Amendment 26 Sep 2026 (first pass):** F12 (cross-origin write hole in
+the API) was added and resolved. It is a security item rather than a
+friction item, but it belongs in this record because the audit's own closing
+law — the UI's job is to keep the human inside their own thought — has a
+backend twin: a vault any page in the browser can write to puts the human's
+thought outside their control.
+
+**Amendment 26 Sep 2026 (second pass):** F13 (unpinned CDN dependency on
+marked) added and resolved; F14 (markdown viewer does not sanitize) added
+and left **open** pending a product-intent decision.
+
+**Amendment 26 Sep 2026 (third pass):** F15 (agent and workflow docs still
+described the Option E door removed by F8) added and resolved — six files,
+three distinct defects, plus a 57-check suite that derives the real menu from
+`app.js` so the documents cannot drift from the code again.
+
+A pattern worth naming, now that three items have landed in the same place:
+**F12, F13 and F15 were all invisible to the friction lens**, and two of the
+three were invisible to *this* audit too. Every UI surface was correct in
+each case — the defects lived in a response header, in a `<script src>`, and
+in the documents describing a button that no longer exists. The audit
+examines the screens the human touches; all three sat outside that: the
+browser/backend seam, the dependency layer, and the written record. A future
+session should audit those three seams deliberately, not incidentally.
+
+Future friction gets recorded as a new session's
 audit, not appended here.

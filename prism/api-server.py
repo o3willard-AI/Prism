@@ -37,10 +37,14 @@ def safe_path(rel: str) -> Path | None:
     """Resolve a relative path inside DATA_ROOT. Returns None if escape attempt."""
     try:
         resolved = (DATA_ROOT / rel).resolve()
-        resolved.relative_to(DATA_ROOT.resolve())
-        return resolved
-    except (ValueError, Exception):
+    except (OSError, ValueError, RuntimeError):
+        # RuntimeError: symlink loop. ValueError: not a path. OSError: bad name.
         return None
+    try:
+        resolved.relative_to(DATA_ROOT.resolve())
+    except ValueError:
+        return None
+    return resolved
 
 
 def read_file(rel: str) -> tuple[str | None, str | None]:
@@ -817,12 +821,147 @@ class PrismHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         print(f"  {self.address_string()} {fmt % args}")
 
+    # ── Same-origin enforcement ────────────────────────────────────────────
+    # Prism is always served same-origin behind the front door (Caddy or
+    # Apache), so it needs no CORS at all. The old wildcard
+    # "Access-Control-Allow-Origin: *" meant any web page open in a browser
+    # on this machine could POST to the API and write into the vault —
+    # including the skill library, which is prompt text the user's own agent
+    # later executes. Read access leaked the vault the same way.
+    #
+    # Browsers always send Origin; non-browser clients (curl, the e2e
+    # harnesses) send none. So: a request with NO Origin is a local tool and
+    # is allowed; a request with an Origin must match the host it was sent
+    # to, which is exactly what same-origin means for a browser.
+    # (SameSite-style CSRF protection, at the only layer that sees both
+    # headers.)
+
+    # A browser Origin is always scheme://host[:port]. Prism is a local app, so
+    # the only origins it legitimately serves are loopback/local hosts.
+    LOCAL_HOST_RE = re.compile(
+        r"^(localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d{1,5})?$", re.I)
+    # Port-insensitive form, used ONLY to recognise loopback-ness on both sides.
+    _local_bare = re.compile(
+        r"^(localhost|127(?:\.\d{1,3}){3}|\[::1\])$", re.I)
+
+    def _local_hosts(self) -> set:
+        """Every host the app legitimately answers on: the request's own
+        Host, plus the Host/Origin the front door forwarded.
+
+        Depending on the front door (ProxyPreserveHost On, or Caddy's
+        default) the Host the backend sees is the front door's address; if
+        that flag were ever turned off it becomes 127.0.0.1:8082 instead.
+        Either way the page and the API live on the same local host, so
+        accept a loopback Origin and require a non-loopback one to match
+        Host exactly. That keeps the guard correct under both proxy
+        configurations rather than silently breaking the app.
+        """
+        hosts = set()
+        for value in (self.headers.get("Host"), self.headers.get("X-Forwarded-Host")):
+            if value:
+                hosts.add(value.strip().lower())
+        return hosts
+
+    def _origin_allowed(self) -> bool:
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True                      # not a browser — cannot be CSRF'd
+        try:
+            parsed = urlparse(origin)
+        except ValueError:
+            return False
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            return False
+        netloc = parsed.netloc.lower()
+
+        hosts = self._local_hosts()
+        if netloc in hosts:
+            return True                      # exactly the host we were called on
+
+        # Origin names a *different* local host than the request's Host. That
+        # is only legitimate if BOTH sides are loopback/local — i.e. the page
+        # and the API are the same machine reached by different names (page
+        # at localhost:8080, proxy reached as 127.0.0.1:8082). The scheme must
+        # be http, since Prism is local-only.
+        #
+        # The Host side matters as much as the Origin side: a request that
+        # arrived addressed to a remote host must never be exempted by a
+        # loopback Origin, or a spoofed X-Forwarded-Host could smuggle one
+        # past the exact-match rule above.
+        #
+        # The PORT matters too, and this is the subtle one: origin is
+        # scheme://host:port, so a page served from 127.0.0.1:8092 is a
+        # DIFFERENT origin from the API on 127.0.0.1:8090 even though both are
+        # loopback. Treating "loopback" as sufficient would let any other
+        # local process — or any page another local app serves — write to the
+        # vault. So the two sides may differ by NAME (localhost vs 127.0.0.1,
+        # which is what a proxy hop looks like) but not by PORT. The port of
+        # the Origin must equal the port of the Host it is being compared to.
+        if parsed.scheme != "http" or not hosts:
+            return False
+        if not self.LOCAL_HOST_RE.match(netloc):
+            return False
+        if not all(self._local_bare.match(h.rsplit(":", 1)[0]
+                                         if h.count(":") == 1 else h)
+                   for h in hosts):
+            return False
+        origin_port = parsed.port or 80
+        # Every Host we were reached on must agree with the Origin's port.
+        for h in hosts:
+            host_port = self._port_of(h)
+            if host_port is not None and host_port != origin_port:
+                return False
+        return True
+
+    @staticmethod
+    def _port_of(netloc: str):
+        """Port from a netloc, or None when it carries none."""
+        try:
+            return urlparse("//" + netloc).port
+        except ValueError:
+            return None
+
+    def _drain_body(self):
+        """Consume the request body so the connection stays usable.
+
+        Without this, a rejected request leaves its body bytes in the socket;
+        the next request on that keep-alive connection is then parsed starting
+        mid-body and the server answers 400. (Symptom seen only with clients
+        that reuse connections — Node's fetch — not with curl.)
+        """
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+        except ValueError:
+            return
+        remaining = length
+        while remaining > 0:
+            chunk = self.rfile.read(min(remaining, 65536))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+
+    def _reject_cross_origin(self) -> bool:
+        """Guard every mutating method. Returns True if the request was
+        rejected and the caller should stop."""
+        if self._origin_allowed():
+            return False
+        self._drain_body()
+        self.send_json(403, {
+            "error": "Cross-origin request refused — Prism accepts same-origin only",
+        })
+        return True
+
     def send_json(self, code: int, data):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # Echo the origin only when it is ours; never a wildcard. Without
+        # this header a foreign page cannot read the response body either.
+        origin = self.headers.get("Origin")
+        if origin and self._origin_allowed():
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.end_headers()
         self.wfile.write(body)
 
@@ -830,14 +969,21 @@ class PrismHandler(http.server.BaseHTTPRequestHandler):
         self.send_json(code, {"error": msg})
 
     def do_OPTIONS(self):
+        if self._reject_cross_origin():
+            return
         self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = self.headers.get("Origin")
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_DELETE(self):
+        if self._reject_cross_origin():
+            return
         parsed = urlparse(self.path)
         path   = parsed.path.rstrip("/")
         qs     = parse_qs(parsed.query)
@@ -948,6 +1094,8 @@ class PrismHandler(http.server.BaseHTTPRequestHandler):
             self.send_error_json(404, "Not found")
 
     def do_POST(self):
+        if self._reject_cross_origin():
+            return
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
 
