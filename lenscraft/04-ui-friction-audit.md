@@ -239,6 +239,44 @@ DELETE. The Knowledge Base convention is that agents author
 break documented behavior. The CORS fix addresses the unauthorized-writer
 problem without narrowing the authorized one.
 
+### F13 — Unpinned CDN dependency ✅ resolved 26 Sep 2026
+~~`prism/index.html` loaded marked from
+`https://cdn.jsdelivr.net/npm/marked/marked.min.js`. Three problems with
+one line: the README claimed "no cloud dependency" while the app needed the
+network to render markdown at all; the URL was **unpinned**, so the version
+silently drifted under the user (it served 15.0.12 while `latest` was
+18.0.14) with no way to know what code had shipped; and it broke the
+"copy the directory, it runs" definition F11 settled on. Invisible to the
+friction lens too — the viewer worked fine on any machine that happened to
+be online, which is exactly why nobody hit it.~~
+
+**Fix:** marked is vendored at `prism/vendor/marked.min.js`, pinned to
+15.0.12, with its MIT licence and full provenance (source, sha256, upgrade
+procedure) in `prism/vendor/README.md`. The file is byte-identical to the
+copy in the official npm tarball, cross-checked against two independent
+sources. No build step, no npm, no network.
+
+**New regression suite** `scripts/e2e-verify-f13.js` (21 checks) — asserts
+no external URL survives in any shipped file, the vendored bytes match the
+recorded sha256, and the render path still works. That render path
+(`marked.parse` in `app.js`) had **no coverage at all** before this, so the
+suite closes that gap too — eight markdown shapes including tables, which
+vault files use heavily, plus a real vault file end to end. Verified the
+suite has teeth in both directions: restoring the CDN tag fails 4 checks;
+tampering with the vendored file fails the sha256, version and render checks.
+
+### F14 — Markdown viewer does not sanitize (open, pre-existing)
+marked v15 does not sanitize: raw HTML in a vault file is passed through
+verbatim, and `javascript:` URLs are not filtered. Both confirmed by direct
+test. This is **pre-existing** — identical with the CDN version — and is not
+introduced by F13. Today it is not a privilege boundary: vault content is
+authored by the user and by their own agent, and the F12 guard means no
+arbitrary web page can write to it. It becomes one if the vault ever ingests
+genuinely untrusted input (a shared team repo, a third-party transcript).
+Options, in rough order of cost: render with a sanitizing step, disable raw
+HTML in marked's options, or accept it explicitly. **Not started — a
+product-intent call, not a mechanical fix.**
+
 ---
 
 ## The pattern in both columns
@@ -271,13 +309,23 @@ running Prism on a phone). The design law candidate above was confirmed
 by every fix in the column: each one returned a bookkeeping task to the
 machine and handed the human only a confirm-or-correct moment.
 
-**Amendment 26 Sep 2026:** F12 (cross-origin write hole in the API) was
-added and resolved. It is a security item rather than a friction item, but
-it belongs in this record because the audit's own closing law — the UI's job
-is to keep the human inside their own thought — has a backend twin: a vault
-any page in the browser can write to puts the human's thought outside their
-control. Note that F12 was invisible to the friction lens: every UI surface
-was correct, the defect lived entirely in a response header.
+**Amendment 26 Sep 2026 (first pass):** F12 (cross-origin write hole in
+the API) was added and resolved. It is a security item rather than a
+friction item, but it belongs in this record because the audit's own closing
+law — the UI's job is to keep the human inside their own thought — has a
+backend twin: a vault any page in the browser can write to puts the human's
+thought outside their control.
+
+**Amendment 26 Sep 2026 (second pass):** F13 (unpinned CDN dependency on
+marked) added and resolved; F14 (markdown viewer does not sanitize) added
+and left **open** pending a product-intent decision.
+
+A pattern worth naming, now that two items have landed in the same place:
+**F12 and F13 were both invisible to the friction lens.** Every UI surface
+was correct in both cases — the defects lived in a response header and in a
+`<script src>`. The audit examines the screens the human touches, and both
+sat one layer below that, in the seam between the browser and the backend. A
+future session should audit that seam deliberately, not incidentally.
 
 Future friction gets recorded as a new session's
 audit, not appended here.

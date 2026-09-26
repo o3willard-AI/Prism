@@ -34,6 +34,7 @@ prism/                  The app
 ├── prism.css           All component styles
 ├── app.js              All logic (vanilla JS; node --check-able)
 ├── layout/ theme/      Separable structural + visual styling
+├── vendor/             Third-party code, vendored + pinned (marked, MIT)
 └── vault/              All data is plain Markdown — git-syncable
     ├── ingestion/      Raw input queue (unprocessed/ is local-only)
     ├── requirements/ hypotheses/ rationalizations/ decisions/ experiments/
@@ -51,6 +52,11 @@ scripts/                Start/stop + Caddy download
 **Stack:** one Caddy binary (reverse proxy + static server) + two Python
 stdlib backends + vanilla JS. No npm, no frameworks, no external AI APIs,
 no cloud dependency.
+
+The one third-party library, `marked` (markdown rendering), is **vendored
+and pinned** at `prism/vendor/marked.min.js` — so Prism runs fully offline
+and the version cannot drift under you. See `prism/vendor/README.md` for
+provenance, the recorded sha256, and the upgrade procedure.
 
 ## Security posture
 
