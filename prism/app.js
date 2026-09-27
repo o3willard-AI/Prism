@@ -1380,6 +1380,7 @@ const _WF_RUNNERS = {
   'requirements-default':     { Init: '_wfReqInit', Respond: '_wfReqRespond', PostProcess: '_wfReqPostProcessMsg' },
   'rationalizations-default': { Init: '_wfRatInit', Respond: '_wfRatRespond', PostProcess: '_wfRatPostProcessMsg' },
   'hypotheses-default':       { Init: '_wfHypInit', Respond: '_wfHypRespond', PostProcess: '_wfHypPostProcessMsg' },
+  'ux-bridge-default':        { Init: '_wfUxInit', Respond: '_wfUxRespond', PostProcess: '_wfUxPostProcessMsg' },
 };
 
 function _wfRunnerFor(workflowId, kind) {
@@ -2007,13 +2008,219 @@ function _wfHypDocSynthPrompt(path, type, content) {
 }
 
 
+// ── UX Bridge Default Workflow Runner ─────────────────────────────────────
+// The one ITERATIVE runner. UX Bridge does not take a shot and finish: it
+// interviews the PM ONE QUESTION AT A TIME until (validated fields / 11) is
+// >= 95%, then compiles the UX Hand-off Specification. So its step machine is
+// a loop, not a ladder:
+//
+//   awaiting-bridge  → the agent asked a question; the human pastes their
+//                      ANSWER back (not the agent's output — the agent's
+//                      next question arrives in response)
+//   interview        → the accumulated answers are re-sent; the agent either
+//                      asks the next question or emits the spec
+//   post-processing  → the spec was written into the file at status ux-ready
+//
+// The "ask one question at a time" rule is load-bearing and is stated in both
+// the skill and the agent definition. Batching questions produces vaguer
+// answers, so Prism asks the human to paste each answer individually rather
+// than accepting a batch.
+
+const UX_ANSWER_MARK = '## UX Interview (Prism log)';
+
+async function _wfUxInit() {
+  // F3: shared resume — replay the real session, restore the paused step.
+  if (await _wfResumeFromPause()) return;
+
+  try {
+    const { content } = await apiGet(`/file?path=${encodeURIComponent(_chat.artifactPath)}`);
+    _chat.artifactContent = content;
+    _chat.artifactMeta    = parseMarkdownMeta(content);
+  } catch (e) {
+    _chatAgentSay(`⚠️ Could not load artifact at \`${_chat.artifactPath}\`: ${e.message}`);
+    return;
+  }
+
+  const meta = _chat.artifactMeta;
+  const type = (meta.artifact_type || meta.type || '').toLowerCase().split(/[\s/]/)[0];
+  const name = _chat.artifactTitle || _chat.artifactPath.split('/').pop().replace('.md', '');
+
+  // UX Bridge consumes the PM's words. A binary or code artifact has no
+  // description to interview about.
+  const blocked = ['media', 'application', 'code'];
+  if (blocked.includes(type)) {
+    _chatAgentSay(
+      `⚠️ Artifact type **"${type}"** cannot be processed by the UX Bridge workflow.\n\n` +
+      `UX Bridge interviews the PM about a feature description, so it needs ` +
+      `**formatted**, **unordered** or **dictation** text. Convert it first, or ` +
+      `send it through the Requirements workflow instead.`
+    );
+    _chat.wfStep = 'blocked';
+    return;
+  }
+
+  _chat.wfStep = 'awaiting-bridge';
+  _chat.messages[_chat.messages.length - 1] = {
+    role: 'agent',
+    text:
+      `**Step 1 complete — artifact type detected: \`${type || 'unordered'}\`**\n\n` +
+      `This goes to the **UX Bridge**, which interviews you one question at a time ` +
+      `until all 11 mandatory UX fields are validated (≥95% confidence), then ` +
+      `compiles the UX Hand-off Specification.\n\n` +
+      `Run the prompt below through your agent. It will either ask its first ` +
+      `question or — if your description is already complete — go straight to the spec.`,
+    attachments: [],
+    codeBlock: _wfUxBridgePrompt(_chat.artifactPath, name, _chat.artifactContent),
+  };
+  _wfRerenderThread();
+}
+
+function _wfUxRespond(userText) {
+  const step = _chat.wfStep;
+
+  // The interview loop, and it works differently from the other three runners.
+  //
+  // F2's paste-back verification assumes the human pastes AGENT OUTPUT — a
+  // PRD, a brief — and checks its structure before advancing. In an interview
+  // the human pastes their ANSWER to a question, which is neither of the
+  // shape's kinds, so the check would return "unrecognized" and the loop
+  // would stall on a red card forever.
+  //
+  // So the answer is appended to the interview and the bridge is simply
+  // re-entered. There is nothing to verify: the machine cannot judge whether
+  // an answer is any good, and it does not need to — the agent decides
+  // whether the field is satisfied when it re-reads the log. Prism's job is
+  // to carry the answer forward, not to grade it (GN-009).
+  if (step === 'awaiting-bridge' || step === 'interview') {
+    // An answer to the interview is not agent output, so it is not verified.
+    // But the paste MIGHT be the finished spec — the agent replies with it
+    // once confidence hits 95%. So check first: if this is a spec, run it
+    // through the real shape check and the terminal write; otherwise treat it
+    // as an answer and carry the interview forward.
+    _wfUxRespondMaybeSpec(userText);
+    return;
+  }
+
+  if (step === 'post-processing') {
+    _chatAgentSay(
+      'Please choose one of the options above to continue. To answer more interview ' +
+      'questions instead, choose **B — Re-run with additional input**.'
+    );
+    return;
+  }
+
+  if (step === 'inquiry') {
+    // Option B path: resume the interview with the extra context.
+    const name = _chat.artifactTitle || _chat.artifactPath.split('/').pop().replace('.md', '');
+    const enriched = (_chat.artifactContent || '') + '\n\n--- Additional context from user ---\n' + userText;
+    _chat.wfStep = 'interview';
+    _chat.messages.push({
+      role: 'agent',
+      text: 'Resuming the **UX Bridge** interview with your additional context. Paste the agent’s next question or the finished spec back here.',
+      attachments: [],
+      codeBlock: _wfUxBridgePrompt(_chat.artifactPath, name, enriched),
+    });
+    _wfRerenderThread();
+    return;
+  }
+
+  _chatAgentSay('Type a message or use the buttons above to choose the next step.');
+}
+
+async function _wfUxRespondMaybeSpec(userText) {
+  // The paste is either the PM's answer to the last question, or the agent's
+  // finished specification. Cheap structural probe first: only a document
+  // carrying the spec heading can possibly be a spec, so ordinary answers skip
+  // the round-trip entirely.
+  const looksLikeSpec = /UX\s*[-–]?\s*Hand[-\s]?off\s*Specification/i.test(userText || '');
+  if (!looksLikeSpec) { _wfUxAdvance(); return; }
+  // It claims to be a spec — verify it properly, and let F2 handle the verdict
+  // (match → written at ux-ready; partial/unrecognized → steering doors).
+  _wfVerifyPasted(userText, 'ux-handoff-spec');
+}
+
+function _wfUxAdvance() {
+  // Carry the interview forward: re-issue the bridge prompt with every answer
+  // so far. If the agent believes it is finished it replies with the spec,
+  // which is verified and (if it holds up) written to the lens file.
+  const name = _chat.artifactTitle
+    || (_chat.artifactPath || '').split('/').pop().replace('.md', '');
+  _chat.wfStep = 'interview';
+  _chat.messages.push({
+    role: 'agent',
+    text:
+      'Answer recorded — the interview is still open. Run the updated prompt ' +
+      'below (it carries every answer so far) and paste the agent’s next ' +
+      'question, or the finished specification if confidence has reached 95%.',
+    attachments: [],
+    codeBlock: _wfUxBridgePrompt(_chat.artifactPath, name, _chat.artifactContent || ''),
+  });
+  _wfRerenderThread();
+  _chatScheduleSave();
+}
+
+function _wfUxPostProcessMsg() {
+  return `✅ UX Hand-off Specification received and written into the file ` +
+         `(status: \`ux-ready\`). It is now ready to hand to the UX team — ` +
+         `no follow-up request should be needed.\n\nChoose how to proceed:`;
+}
+
+function _wfUxBridgePrompt(path, name, content) {
+  // The answer log is appended to the PM description so the agent sees the
+  // whole interview, not just the latest turn — the skill's loop is stateful,
+  // and a stateless prompt would restart the interview every turn.
+  const answers = _chat.messages
+    .filter(m => m.role === 'user' && m.text)
+    .map(m => m.text.trim())
+    .filter(Boolean);
+  const log = answers.length
+    ? `\n\n${UX_ANSWER_MARK}\nThe PM has already given ${answers.length} ` +
+      `answer(s) in this interview. Treat each as a validated answer, then ` +
+      `continue from where you left off — do not re-ask anything already answered:\n\n` +
+      answers.map((a, i) => `**Answer ${i + 1}:**\n${a}`).join('\n\n') + '\n'
+    : '';
+  return `ARTIFACT TYPE:    formatted
+ARTIFACT PATH:    ${path}
+LENS NAME:        Requirement
+DOCUMENT NAME:    ${name}
+
+PM DESCRIPTION:
+---
+${content}
+---${log}
+PRODUCT CONTEXT:
+---
+(no product documentation supplied — if none exists in vault/knowledge/product/, say so and adjust your questions accordingly)
+---
+
+UX REQUIREMENTS:  vault/knowledge/process/ux-information-requirements.md
+
+Skill: vault/knowledge/resources/skills/ux-bridge.md
+
+Ask ONE question per turn, and say which field it fills and why it matters.
+Stop the moment confidence reaches 95% — do not ask for "just one more thing".
+`;
+}
+
+
 // ── F2 — Paste-back verification ────────────────────────────────────────────
 // The machine checks pasted agent output against the skill's declared output
 // shape (POST /verify — deterministic, no LLM). Structure verified by the
 // machine; content stays the human's to steer (GN-009). Silent advancement
 // on garbage was scattered light (lenscraft/04 — F2).
 
-const _VERIFY_TERMINAL = { 'prd-gate': true, 'structured-account': true, 'hypothesis-brief': true };
+// Shapes whose output is the workflow's FINISHED artifact: written into the
+// lens file and the workflow moves to post-processing. A shape not listed
+// here is either an intermediate step (intent-synth, doc-synth) or, for
+// ux-handoff-spec, a shape whose *kind* decides — a clarifying question is
+// intermediate, a compiled spec is terminal. That per-kind decision lives in
+// _wfAdvanceVerified, and _wfApplyAccepted checks isInquiry before writing.
+const _VERIFY_TERMINAL = {
+  'prd-gate': true,
+  'structured-account': true,
+  'hypothesis-brief': true,
+  'ux-handoff-spec': true,     // terminal only when kind === 'spec'
+};
 
 async function _wfVerifyPasted(userText, shape) {
   let v;
@@ -2149,6 +2356,30 @@ function _wfAdvanceVerified(v, userText) {
         _chat.messages.push({ role: 'agent', text: _wfHypPostProcessMsg(), attachments: [] });
       }
     }
+  } else if (_chat.workflowId === 'ux-bridge-default') {
+    // The interview loop. A QUESTION means the agent is still interviewing:
+    // the human answered the previous question, so we re-enter the agent with
+    // the accumulated answer log and wait for its next question or the spec.
+    // A SPEC means confidence hit 95% and the spec was already written into
+    // the file by _wfApplyAccepted (ux-handoff-spec is terminal).
+    if (isInquiry) {
+      _chat.wfStep = 'interview';
+      _chat.messages.push({
+        role: 'agent',
+        text:
+          'Answer recorded — the interview is still open. Run the updated prompt ' +
+          'below (it carries every answer so far) and paste the agent’s next ' +
+          'question, or the finished specification if confidence has reached 95%.',
+        attachments: [],
+        codeBlock: _wfUxBridgePrompt(
+          _chat.artifactPath,
+          _chat.artifactTitle || _chat.artifactPath.split('/').pop().replace('.md',''),
+          _chat.artifactContent || ''),
+      });
+    } else {
+      _chat.wfStep = 'post-processing';
+      _chat.messages.push({ role: 'agent', text: _wfUxPostProcessMsg(), attachments: [] });
+    }
   }
 }
 
@@ -2170,16 +2401,24 @@ async function _wfApplyAccepted(v, userText) {
     }
     const keep = (provEnd >= 0 ? lines.slice(0, provEnd + 1) : lines).join('\n');
     const today = new Date().toISOString().slice(0, 10);
+    // UX Bridge's Output Handling rule is specific: the spec lands in
+    // vault/requirements/ at status `ux-ready`, not the generic `review` every
+    // other terminal shape uses. "ux-ready" is the signal the UX team reads.
+    const isUxSpec = v.shape === 'ux-handoff-spec' && v.kind === 'spec';
+    const nextStatus = isUxSpec ? 'ux-ready' : 'review';
     const updatedHead = keep
-      .replace(/\*\*Status:\*\*.*/i, '**Status:** review')
+      .replace(/\*\*Status:\*\*.*/i, `**Status:** ${nextStatus}`)
       .replace(/\*\*Last updated:\*\*.*/i, `**Last updated:** ${today}`);
     const sectionLabel = ({
       'prd-gate': '## PRD (agent output, structure verified by Prism)',
       'structured-account': '## Structured Account (agent output, structure verified by Prism)',
       'hypothesis-brief': '## Hypothesis brief (agent output, structure verified by Prism)',
+      'ux-handoff-spec': '## UX Hand-off Specification (agent output, structure verified by Prism)',
     })[v.shape] || '## Agent output (structure verified by Prism)';
     await apiPost('/file', { path: lensPath, content: `${updatedHead}\n\n${sectionLabel}\n\n${userText.trim()}\n` });
-    toast('✓ Output written into the lens file — status set to review');
+    toast(isUxSpec
+      ? '✓ UX Hand-off Specification written — status set to ux-ready'
+      : '✓ Output written into the lens file — status set to review');
   } catch (e) {
     toast(`⚠️ Could not write output into the lens file: ${e.message}`, true);
   }
@@ -2308,9 +2547,15 @@ async function _wfResumeFromPause() {
       text: '**Resuming at: Clarification Gate**\n\nHere is the Clarification Gate prompt. Paste the output back here.',
       codeBlock: _wfHypGatePrompt(_chat.artifactPath, name, _chat.artifactContent || ''),
     };
+  } else if ((step === 'awaiting-bridge' || step === 'interview') && !endsWithPrompt) {
+    resumeMsg = {
+      text: '**Resuming the UX Bridge interview**\n\nHere is the bridge prompt with every answer so far. Paste the agent’s next question, or the finished spec, back here.',
+      codeBlock: _wfUxBridgePrompt(_chat.artifactPath, name, _chat.artifactContent || ''),
+    };
   } else if (step === 'post-processing' && !endsWithPrompt) {
     resumeMsg = { text: wf === 'rationalizations-default' ? _wfRatPostProcessMsg()
                      : wf === 'hypotheses-default'         ? _wfHypPostProcessMsg()
+                     : wf === 'ux-bridge-default'          ? _wfUxPostProcessMsg()
                      : _wfReqPostProcessMsg() };
   } else if (step === 'inquiry' && !endsWithPrompt) {
     resumeMsg = { text: 'The agent has questions (certainty below 95%). Answer them above — when you send your answers, Prism re-runs the skill with the enriched input.' };
@@ -2441,6 +2686,8 @@ async function wfPauseHere() {
     'init':               'Workflow initialising — artifact not yet loaded.',
     'routing':            'Detecting artifact type and choosing agent path.',
     'awaiting-doc-synth': 'Waiting for Document Synthesizer output from user.',
+    'awaiting-bridge': 'UX Bridge interview — waiting for the agent’s next question or the finished spec.',
+    'interview': 'UX Bridge interview in progress — the PM is answering questions.',
     'awaiting-clarification': 'Waiting for Clarification Gate output from user.',
     'awaiting-intent-synth': 'Waiting for Intent Synthesizer output from user.',
     'awaiting-conv-synth': 'Waiting for Conversation Synthesizer output from user.',
@@ -2458,6 +2705,8 @@ async function wfPauseHere() {
     'awaiting-conv-synth':   `Run the **Conversation Synthesizer** skill prompt shown above. Paste the output into the chat and send.`,
     'awaiting-structure':    `Run the **structure prompt** shown above. Paste the output into the chat and send.`,
     'awaiting-doc-synth':    `Run the **Document Synthesizer** skill prompt shown above. Paste the output into the chat and send.`,
+    'awaiting-bridge':      `Run the **UX Bridge** prompt shown above. Paste the agent's next question — or the finished specification — into the chat and send.`,
+    'interview':            `Answer the UX Bridge question above, then run the updated bridge prompt and paste the agent's next question (or the finished spec) back here.`,
     'awaiting-clarification':`Run the **Clarification Gate** skill prompt shown above. Paste the output into the chat and send.`,
     'awaiting-prd-gate':     `Run the **PRD Gate** skill prompt shown in the last agent message above. Paste the output into the chat and send.`,
     'post-processing':       `Choose one of the post-processing options presented in the last agent message.`,
