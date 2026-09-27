@@ -73,6 +73,46 @@ const read = (p) => fs.readFileSync(p, 'utf8');
     check(`${view}() exists`, app.includes(`async function ${view}(`));
   }
   check('lens views point at the Crafting Table', /_craftingTablePointer/.test(app));
+
+  // ── 1b. The Ingest page is retired too ─────────────────────────────────
+  section('Ingest page retired');
+  check('renderIngest() gone', !/function renderIngest\b/.test(app));
+  check('submitIngest() gone', !/function submitIngest\b/.test(app));
+  check('togglePrivate() gone', !/function togglePrivate\b/.test(app));
+  check('handleFileSelect() gone', !/function handleFileSelect\b/.test(app));
+  check('_isPrivate state gone', !/_isPrivate\b/.test(app));
+  check('no ingest view in renderView dispatch', !/view === 'ingest'/.test(app));
+  check('no ingest title in VIEW_TITLES', !/ingest: 'Ingest Artifact'/.test(app));
+  check('Option D now lands on the desk, not the deleted page',
+        !/renderView\('ingest'\)/.test(app) && /await renderView\('dashboard'\)/.test(app));
+  const html = read(path.join(ROOT, 'prism', 'index.html'));
+  check('sidebar has no ingest nav item', !/data-view="ingest"/.test(html));
+  check('the "Enlighten" section is gone', !/Enlighten/.test(html));
+  const css = read(path.join(ROOT, 'prism', 'prism.css'));
+  // Assert on RULES, not mentions — a comment explaining the removal is fine.
+  check('orphaned .drop-zone / .dz-* rules removed',
+        !/^\s*\.drop-zone\b/m.test(css) && !/^\s*\.drop-zone\s*\./m.test(css)
+        && !/^\s*\.dz-\w+\s*\{/m.test(css));
+  check('the desk drop surface survives', /^\s*\.desk-drop\b/m.test(css));
+
+  // ── 1c. Staging preserved, and the queue is no longer write-only ──────
+  section('Staging moved to the desk');
+  check('deskStageOnly() exists', /async function deskStageOnly\(/.test(app));
+  check('stage-only routes through the shared ingest builder',
+        /async function deskStageOnly[\s\S]{0,900}ingestArtifact\(/.test(app));
+  check('stage-only names its privacy flag explicitly',
+        /async function deskStageOnly[\s\S]{0,900}is_private: _deskPrivate/.test(app));
+  check('the desk renders a stage-only door', /onclick="deskStageOnly\(\)"/.test(app));
+  check('the queue is listed on the desk',
+        /ingestion\/unprocessed'\)\)/.test(app));
+  check('queue rows can be loaded', /_deskLoadQueued/.test(app));
+  check('queue rows can be discarded', /_deskDiscardQueued/.test(app));
+  check('loading unwraps the ingest document',
+        /function _rawIngestBody\(/.test(app)
+        && /async function _deskLoadQueued[\s\S]{0,600}_rawIngestBody\(content\)/.test(app));
+  check('discard confirms before deleting', /confirm\(/.test(app));
+  check('discard is honest about the retained source copy',
+        /source copy retained/.test(app));
   check('pointer navigates to the desk', /gotoView\('dashboard'\)/.test(app));
 
   // ── 2. Option C still works ────────────────────────────────────────────

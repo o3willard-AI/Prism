@@ -88,8 +88,6 @@ const PROSE = `so basically the ${TOKEN} export feature keeps failing whenever t
     /function ingestArtifact[\s\S]{0,400}apiPost\('\/ingest'/.test(script));
   check('deskSubmit routes through ingestArtifact',
     /function deskSubmit[\s\S]{0,800}ingestArtifact\(/.test(script));
-  check('submitIngest routes through ingestArtifact',
-    /function submitIngest[\s\S]{0,700}ingestArtifact\(/.test(script));
   check('no hardcoded is_private: false remains in ingest callers',
     !/ingestArtifact\([^)]*is_private:\s*false/.test(script.replace(/\s+/g, ' ')));
   check('deskFileSelect has no inline FileReader',
@@ -103,8 +101,9 @@ const PROSE = `so basically the ${TOKEN} export feature keeps failing whenever t
   // add its surface back here rather than relaxing the check below.
   check('the wizard quick-ingest surface is retired',
     !/function wizQuickIngest/.test(script) && !/function handleQIFileSelect/.test(script));
+  // deskSubmit (lens path) + deskStageOnly (staging) + the definition = 3.
   const ingestCallers = (script.match(/ingestArtifact\(/g) || []).length;
-  check('ingestArtifact is called from each remaining surface only',
+  check('ingestArtifact has exactly the definition plus two desk callers',
     ingestCallers === 3, 'found ' + ingestCallers + ' call sites (incl. the definition)');
   check('handleQIFileSelect has no inline FileReader',
     !/function handleQIFileSelect[\s\S]{0,700}new FileReader/.test(script)
@@ -119,11 +118,17 @@ const PROSE = `so basically the ${TOKEN} export feature keeps failing whenever t
     /id="desk-private"/.test(script));
   check('desk label names the consequence',
     /desk-private[\s\S]{0,200}exclude from source copies and repo pushes/.test(script));
-  check('Ingest page keeps the private toggle',
-    /id="private-toggle"/.test(script));
   // The qi-private checkbox belonged to wizard quick-ingest, retired in F17.
   check('the retired wizard private checkbox is gone',
     !/id="qi-private"/.test(script));
+  // F17 also retired the standalone Ingest page, so the Crafting Table is the
+  // only ingest surface left. F9's law — one path, one private decision —
+  // is now trivially satisfied by there being one caller.
+  check('the Ingest page is retired', !/function renderIngest/.test(script));
+  check('the Crafting Table is the only ingest surface',
+    !/function submitIngest/.test(script) && !/function handleFileSelect/.test(script));
+  check('the stage-only door replaces the Ingest page',
+    /async function deskStageOnly/.test(script));
 
   // ── 3) ingestArtifact contract ───────────────────────────────────────────
   check('ingestArtifact exists', run('typeof ingestArtifact') === 'function');
@@ -217,23 +222,6 @@ const PROSE = `so basically the ${TOKEN} export feature keeps failing whenever t
     await sleep(500);
   }
   if (pubIng) await fetch('http://localhost/prism/api/file?path=' + encodeURIComponent(pubIng.path), { method: 'DELETE' });
-
-  // ── 7) Ingest page toggle still drives the shared path ──────────────────
-  await run('renderIngest(document.getElementById("content-area"))');
-  run('togglePrivate()');
-  check('Ingest toggle flips _isPrivate on', run('_isPrivate') === true);
-  run(`document.getElementById('ing-type').value = 'unordered'`);
-  run(`document.getElementById('ing-title').value = ${JSON.stringify('f9-page-' + TOKEN)}`);
-  run(`document.getElementById('ing-content').value = ${JSON.stringify(PROSE)}`);
-  await run('submitIngest()');
-  await sleep(800);
-  const list3 = await api('/prism/api/list?path=' + encodeURIComponent('ingestion/unprocessed'));
-  const pageIng = (list3 || []).find(f => f.type === 'file' && f.name.includes('f9-page-' + TOKEN));
-  check('Ingest page artifact created', !!pageIng);
-  check('Ingest page private artifact has -private suffix',
-    !!pageIng && pageIng.name.includes('-private'));
-  check('Ingest toggle reset after submit', run('_isPrivate') === false);
-  if (pageIng) await fetch('http://localhost/prism/api/file?path=' + encodeURIComponent(pageIng.path), { method: 'DELETE' });
 
   // Immutable source mirrors live outside the API's DELETE-allowed roots;
   // the harness owns its own noise (same pattern as the F10 harness).
