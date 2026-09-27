@@ -37,10 +37,22 @@ self-contained) stays true.
 4. Run the regression suites — `scripts/e2e-verify-f13.js` renders real vault
    markdown through the vendored copy and fails if the output changes shape.
 
-### Known limitation (pre-existing, not introduced by vendoring)
+### Sanitization is handled by the app, not by marked
 
 marked v15 does **not** sanitize: raw HTML in a markdown file is passed
-through, and `javascript:` URLs are not filtered. Vault content is authored
-by the user and by their own agent, so this is not currently a privilege
-boundary — but see backlog item F14 in `lenscraft/04-ui-friction-audit.md`
-before treating a vault file as untrusted input.
+through, and `javascript:` URLs are not filtered. Prism does not rely on
+marked for that — `prism/app.js` defines `renderMarkdown()`, which applies a
+two-rule renderer override before output ever reaches `innerHTML`:
+
+- raw HTML tokens are dropped
+- link schemes are restricted to `http(s)`, protocol-relative, and
+  site-relative (`/`, `#`, `?`); anything else renders as inert,
+  visibly-blocked text
+
+This is deliberately not a sanitizer dependency — that would reopen the
+"one vendored library" position. `scripts/e2e-verify-f16.js` asserts the
+hardening is present and that all 49 vault files render byte-identically to
+stock marked, so the override cannot silently break real content.
+
+**If you upgrade marked, run that suite first.** A renderer-API change is the
+most likely way an upgrade could break this.

@@ -76,6 +76,13 @@ write.
 
 Verified by `scripts/e2e-verify-f12.js`.
 
+**Markdown rendering is hardened.** marked does not sanitize by default, so
+`app.js` routes both render paths through `renderMarkdown()`, which drops raw
+HTML and restricts link schemes to http(s) and same-origin-relative forms.
+Any other scheme renders as inert, visibly-blocked text. No sanitizer
+dependency. Verified by `scripts/e2e-verify-f16.js`, which also holds the
+render baseline for all 49 vault files.
+
 ## The optics
 
 `vault/knowledge/resources/skills/` contains the refraction prompts —
