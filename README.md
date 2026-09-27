@@ -127,11 +127,33 @@ capabilities that do not exist yet — primarily emission targets, open to
 inputs as well. It ships empty on purpose, which is why there is no "emit to
 integration" option today: a door appears when something can open it.
 
-## Known gap
+## Ingesting documents
 
-External documents (PDF, DOCX, HTML) **cannot be ingested** — input is
-text-only (`.md .txt .csv .json .rtf`). Supporting them means either a
-dependency or a conversion step. Recorded, not started.
+The Crafting Table accepts external documents as well as typed text:
+**DOCX, XLSX, PPTX, HTML, RTF and PDF**, alongside Markdown, text, CSV and
+JSON. A file whose extension is wrong is sniffed by magic bytes, so a `.docx`
+renamed to `.dat` still reads.
+
+Extraction is **Python standard library only** — no pip install, no build
+step. DOCX and friends are unzipped and parsed as XML; HTML goes through
+`html.parser`; RTF is a small scanner; PDF is best-effort.
+
+**When Prism cannot read a document, it says so and refuses** rather than
+guessing. This is deliberate. A scanned PDF yields no text, and a
+font-subset PDF yields bytes that decode to noise — returning either would
+put garbage in the vault looking exactly like something a person wrote, and a
+lens would later refract it as though it were human thought. The refusal names
+the reason and says what to do instead ("this is a scan; select the text and
+paste it in"). Prism does not do OCR, and will not pretend otherwise.
+
+Two limits, both of which refuse rather than truncate: 32 MB on the wire, and
+2 MB of extracted text. A truncated document that looks complete is worse than
+no document.
+
+Reading a document and filing it are two different acts. Dropping a document
+on the Crafting Table stages it in `ingestion/unprocessed/`; attaching one to
+a chat message extracts its text without creating a file, because reading
+something should not quietly add an artifact you did not ask for.
 
 | Optic | Refracts | Into |
 |---|---|---|
