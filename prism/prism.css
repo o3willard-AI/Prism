@@ -391,6 +391,26 @@
     font-family: var(--font); }
   .wf-door:hover { background: #45475a; }
   .wf-door:disabled { opacity: 0.6; cursor: wait; }
+
+  /* F22: the default delivery door. Filing the prompt is the primary action
+     now, so it carries the accent — copy is deliberately the quieter option. */
+  .wf-door-primary {
+    border-color: #6366f1; background: rgba(99,102,241,.16); color: #c7d2fe;
+    font-weight: 600;
+  }
+  .wf-door-primary:hover { background: rgba(99,102,241,.28); }
+
+  /* Channel 3 — send to a configured agent. */
+  .wf-agent-pick {
+    padding: 5px 10px; border-radius: 7px; font-size: 12px;
+    background: #313244; color: #eceef4; border: 1px solid #45475a;
+    cursor: pointer; max-width: 220px;
+  }
+  .wf-agent-pick:hover { background: #45475a; }
+  .wf-agent-status {
+    font-size: 11.5px; color: var(--text-secondary); font-style: italic;
+    align-self: center;
+  }
   .wf-stage-saved { font-size: 11.5px; color: #a6e3a1; }
   /* ── F2 verification verdict card (lenscraft/04, GN-009) ─────────────── */
   .wf-verify { margin-top: 10px; border-radius: 10px; overflow: hidden;
