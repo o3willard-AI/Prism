@@ -242,28 +242,30 @@ const VAULT = path.join(__dirname, '..', 'prism', 'vault');
       await sleep(1100);
     };
 
-    // ux-bridge-default is the definition with no runner.
+    // Open ux-bridge-default. It gained a runner in F20, so it must now read
+    // "runnable" — the badge is derived from _WF_RUNNERS, so adding the
+    // runner flipped it with no change to this view's code. That is the
+    // property worth asserting.
     await openWorkflow('ux.?bridge');
     const uxHtml = await page.eval('document.getElementById("workflows-content").innerHTML');
-    check('ux-bridge opens and is labelled not-runnable',
-          /defined, not yet runnable/.test(uxHtml), uxHtml.slice(0, 200));
-    // The explanation lives in the badge's title attribute, so it is escaped
-    // in innerHTML — read the attribute, not the markup.
-    check('ux-bridge badge explains what would fix it (title attr)',
-          await page.eval(`(() => {
-            const b = [...document.querySelectorAll('#workflows-content .badge')]
-              .find(x => /not yet runnable/.test(x.textContent));
-            return !!b && /Writing the runner makes it runnable/.test(b.getAttribute('title') || '');
-          })()`));
-    check('ux-bridge is NOT labelled runnable', !/▶ runnable/.test(uxHtml));
+    check('ux-bridge is now labelled runnable (F20 added the runner)',
+          /▶ runnable/.test(uxHtml), uxHtml.slice(0, 200));
+    check('ux-bridge is no longer labelled not-runnable',
+          !/defined, not yet runnable/.test(uxHtml));
 
-    // A workflow that does have a runner.
+    // A workflow that always had a runner.
     await openWorkflow('requirements.?default');
     const reqHtml = await page.eval('document.getElementById("workflows-content").innerHTML');
     check('requirements-default is labelled runnable',
           /▶ runnable/.test(reqHtml), reqHtml.slice(0, 200));
     check('requirements-default is NOT labelled not-runnable',
           !/defined, not yet runnable/.test(reqHtml));
+
+    // No workflow in the library is declared-but-unrunnable any more, so the
+    // warn badge must appear nowhere.
+    check('no workflow shows the not-runnable warning',
+          !(await page.eval(
+            `/defined, not yet runnable/.test(document.body.innerHTML)`)));
 
     // ── final: still no errors ───────────────────────────────────────────
     section('Console hygiene');

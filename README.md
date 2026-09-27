@@ -97,7 +97,15 @@ A workflow is a *definition* in `vault/workflows/`; a workflow is
 *runnable* only when `app.js` has a runner for it. The Workflows view labels
 each definition **▶ runnable** or **⚠️ defined, not yet runnable**, read from
 the single `_WF_RUNNERS` registry — so a definition cannot look like a
-working door. Writing a runner makes the badge clear itself.
+working door. All four workflows in the vault now have runners; adding one is
+a single line in that registry, and the badge clears itself.
+
+The four runners differ in shape. Requirements, Hypotheses and
+Rationalizations are ladders — ingest, refract, verify, emit. **UX Bridge is
+a loop**: it interviews the PM one question at a time until all 11 mandatory
+UX fields are validated (≥95%), carrying every prior answer forward so the
+interview never restarts. Its finished spec lands in `vault/requirements/` at
+status **`ux-ready`**.
 
 ## The one door
 

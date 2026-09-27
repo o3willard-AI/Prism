@@ -151,13 +151,29 @@ const read = (p) => fs.readFileSync(p, 'utf8');
   check('state-transition logic still branches per workflow (unchanged)',
         /_chat\.workflowId === 'requirements-default'/.test(app));
 
+  // Declare the vault's workflow list up front: the registry check above
+  // compares against it, and the badge premise below uses it again.
+  const wfDirs = fs.readdirSync(path.join(VAULT, 'workflows'))
+                   .filter(d => fs.statSync(path.join(VAULT, 'workflows', d)).isDirectory());
+
   // Every id in the registry must resolve to a real function in app.js.
   const regBlock = app.match(/const _WF_RUNNERS = \{[\s\S]*?\n\};/);
   check('registry block found', !!regBlock);
+  const ids = regBlock
+    ? [...regBlock[0].matchAll(/'([a-z-]+)':\s*\{/g)].map(m => m[1]) : [];
   if (regBlock) {
-    const ids = [...regBlock[0].matchAll(/'([a-z-]+)':\s*\{/g)].map(m => m[1]);
     const fns = [...regBlock[0].matchAll(/'(_wf\w+)':/g)].map(m => m[1]);
-    check('registry lists the three known workflows', ids.length === 3, ids.join(', '));
+    // F20 added ux-bridge-default, so the registry now has four runners for
+    // three workflow FOLDERS: requirements-default and ux-bridge-default are
+    // both defined in workflows/ux-bridge-default/ and
+    // workflows/requirements-default/ respectively, but the three lens
+    // defaults plus ux-bridge is four distinct workflow ids. Assert the
+    // ids, not a count.
+    check('registry covers all three lens defaults plus ux-bridge',
+          ['requirements-default', 'rationalizations-default', 'hypotheses-default',
+           'ux-bridge-default'].every(v => ids.includes(v)), ids.join(', '));
+    check('registry has exactly one entry per workflow id (no duplicates)',
+          new Set(ids).size === ids.length, ids.join(', '));
     const missing = fns.filter(f => !app.includes('function ' + f));
     check('every registered function exists in app.js', missing.length === 0,
           missing.join(', '));
@@ -175,16 +191,18 @@ const read = (p) => fs.readFileSync(p, 'utf8');
   check('css defines .badge.warn', /\.badge\.warn\s*\{/.test(read(CSS)));
   check('css defines .badge.ok', /\.badge\.ok\s*\{/.test(read(CSS)));
 
-  // The premise: ux-bridge-default really has no runner, and the badge
-  // depends on the registry, not on a hardcoded exclusion list.
-  const wfDirs = fs.readdirSync(path.join(VAULT, 'workflows'))
-                   .filter(d => fs.statSync(path.join(VAULT, 'workflows', d)).isDirectory());
+  // The premise: the badge depends on the registry, not on a hardcoded
+  // exclusion list, so adding a runner flips the badge with no other change.
+  // (F20 gave ux-bridge-default a runner, so the vault and the registry are
+  // now fully in step — no workflow is declared-but-unrunnable.)
   check('vault still has its three workflow definitions', wfDirs.length === 3,
         wfDirs.join(', '));
   check('ux-bridge-default is present in the vault',
         wfDirs.includes('ux-bridge-default'));
-  check('ux-bridge-default has no runner in the registry',
-        !/ux-bridge-default/.test(regBlock ? regBlock[0] : ''));
+  check('every workflow FOLDER has at least one runner registered',
+        wfDirs.every(d => ids.some(i => i.startsWith(d))), wfDirs.join(', '));
+  check('ux-bridge-default now HAS a runner',
+        /ux-bridge-default/.test(regBlock ? regBlock[0] : ''));
   check('the badge logic reads the registry, not an exclusion list',
         /_wfHasRunner\(id\)/.test(app) && !/id !== 'ux-bridge/.test(app));
 

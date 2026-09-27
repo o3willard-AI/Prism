@@ -310,6 +310,51 @@ VERIFY_SHAPES = {
             },
         },
     },
+    # From skills/ux-bridge.md — UX Hand-off Specification.
+    #
+    # UX Bridge is the one ITERATIVE skill: it interviews the PM one question
+    # at a time until (validated fields / 11) >= 95%, and only then compiles
+    # the spec. So its shape has two very different outputs, discriminated by
+    # STRUCTURE rather than by a self-declared label:
+    #   - "question": still interviewing. The human pastes their ANSWER back
+    #     and the loop continues — so this kind is NOT terminal and must never
+    #     be written into the lens file.
+    #   - "spec": confidence reached 95% and all 11 sections were compiled.
+    #     Terminal — written into the file with status ux-ready.
+    #
+    # The 11 section patterns deliberately require the NUMBERED headings from
+    # the skill's output format. That is what distinguishes a real spec from a
+    # document that merely discusses accessibility, and it is why the shape
+    # check can be trusted to gate the write.
+    "ux-handoff-spec": {
+        "label": "UX Hand-off Specification",
+        "kinds": {
+            "question": {
+                "label": "Clarifying question (interview in progress)",
+                "required": [
+                    ("a question", r"\?"),
+                    ("why it is being asked", r"(?i)\bso that\b|\bto (?:ensure|clarify|confirm|let|define|specify)\b"),
+                ],
+            },
+            "spec": {
+                "label": "UX Hand-off Specification",
+                "required": [
+                    ("spec heading",              r"(?i)UX\s*[-–]?\s*Hand[-\s]?off\s*Specification"),
+                    ("1. Problem Statement",      r"(?im)^#+\s*1\.\s*Problem\s+Statement"),
+                    ("2. User Stories (INVEST)",  r"(?im)^#+\s*2\.\s*User\s+Stor"),
+                    ("3. Acceptance Criteria",     r"(?im)^#+\s*3\.\s*Acceptance\s+Criter"),
+                    ("4. User Scenarios and Flows", r"(?im)^#+\s*4\.\s*Key\s+User\s+Scenarios"),
+                    ("5. Error States and Edge Cases", r"(?im)^#+\s*5\.\s*Error\s+States"),
+                    ("6. Accessibility",          r"(?im)^#+\s*6\.\s*Accessibility"),
+                    ("7. Dependencies and Assumptions", r"(?im)^#+\s*7\.\s*Dependencies\s+and\s+Assumptions"),
+                    ("8. Open Questions",         r"(?im)^#+\s*8\.\s*Open\s+Questions"),
+                    ("9. Users or Personas",      r"(?im)^#+\s*9\.\s*Users\s+or\s+Personas"),
+                    ("10. Business Goals",        r"(?im)^#+\s*10\.\s*Business\s+Goals"),
+                    ("11. Constraints",           r"(?im)^#+\s*11\.\s*Constraints"),
+                ],
+            },
+        },
+    },
 }
 
 
