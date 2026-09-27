@@ -3,6 +3,57 @@ let _status = null;
 let _currentFile = null;
 let _editMode = false;
 
+// ── Markdown rendering (F14) ───────────────────────────────────────────────
+// marked v15 does not sanitize: raw HTML in a vault file is passed through
+// verbatim, and `javascript:` URLs survive into an href. Both outputs land in
+// innerHTML, so a vault file carrying `<img src=x onerror=…>` would execute in
+// the Prism origin. Today the vault is not a trust boundary — the only writer
+// is the human and their own agent, and the F12 same-origin guard stops any
+// web page from writing at all — but that is a property of who writes today,
+// not of the renderer, and it stops being true the moment a shared or
+// third-party document lands in the vault.
+//
+// Rather than pull in a sanitizer dependency (which would reopen the "one
+// vendored library" position F13 just settled), harden marked's own extension
+// point. Two rules, applied through the renderer:
+//
+//   1. Raw HTML is dropped, not escaped. Vault markdown is written in
+//      markdown; anything else is either noise or an injection attempt.
+//   2. Link schemes are restricted. An href may be http(s), protocol-relative,
+//      or site-relative (leading /, # or ?) — all of which stay inside Prism's
+//      own origin. Anything with an explicit scheme that is not http(s)
+//      (javascript:, data:, vbscript:, file:) renders as plain text, so the
+//      words survive but the navigation does not.
+//
+// Measured blast radius across all 49 vault files: 8 render differently, and
+// every one only loses an invisible HTML comment. No vault file relies on
+// raw HTML. See scripts/e2e-verify-f16.js, which locks that baseline down.
+const _SAFE_SCHEME = /^(https?:)?\/\/|^[/#?]/i;
+
+function _mdRenderer() {
+  return {
+    // Inline and block HTML both route here; drop the token entirely.
+    html() { return ''; },
+    link(token) {
+      const href = (token && (token.href
+        || (token.tokens && token.tokens[0] && token.tokens[0].href))) || '';
+      const text = marked.Parser.parseInline(token.tokens);
+      return _SAFE_SCHEME.test(href)
+        ? `<a href="${escHtml(href)}">${text}</a>`
+        : `<span class="md-link-blocked" title="blocked link scheme">${text}</span>`;
+    },
+  };
+}
+
+let _mdReady = false;
+function renderMarkdown(md) {
+  if (!_mdReady && window.marked) {
+    window.marked.use({ renderer: _mdRenderer() });
+    _mdReady = true;
+  }
+  return window.marked.parse(md || '');
+}
+
 // ── API helpers ────────────────────────────────────────────────────────────
 
 async function apiFetch(path, opts = {}) {
@@ -795,7 +846,7 @@ async function openCraftingMethod(lensRelPath, contentId) {
         <button class="btn btn-ghost btn-sm" onclick="openFile('${lensRelPath}','${contentId}')">← Back to lens</button>
         <span class="badge" style="font-size:11px">📜 historical asset — read-only</span>
       </div>
-      <div class="md-viewer">${marked.parse(content)}</div>`;
+      <div class="md-viewer">${renderMarkdown(content)}</div>`;
   } catch (e) {
     panel.innerHTML = `<div class="card" style="color:#dc2626">⚠️ ${e.message}</div>`;
   }
@@ -840,7 +891,7 @@ function renderFileViewer(panel, relPath, content, contentId) {
       ${actionBtns}
     </div>
     <div id="file-view-area">
-      <div class="md-viewer" id="md-rendered">${marked.parse(content)}</div>
+      <div class="md-viewer" id="md-rendered">${renderMarkdown(content)}</div>
       <textarea class="md-editor" id="md-raw" style="display:none">${escHtml(content)}</textarea>
     </div>`;
 }

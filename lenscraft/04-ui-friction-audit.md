@@ -265,17 +265,52 @@ vault files use heavily, plus a real vault file end to end. Verified the
 suite has teeth in both directions: restoring the CDN tag fails 4 checks;
 tampering with the vendored file fails the sha256, version and render checks.
 
-### F14 — Markdown viewer does not sanitize (open, pre-existing)
-marked v15 does not sanitize: raw HTML in a vault file is passed through
+### F14 — Markdown viewer does not sanitize ✅ resolved 26 Sep 2026
+~~marked v15 does not sanitize: raw HTML in a vault file is passed through
 verbatim, and `javascript:` URLs are not filtered. Both confirmed by direct
 test. This is **pre-existing** — identical with the CDN version — and is not
 introduced by F13. Today it is not a privilege boundary: vault content is
 authored by the user and by their own agent, and the F12 guard means no
 arbitrary web page can write to it. It becomes one if the vault ever ingests
-genuinely untrusted input (a shared team repo, a third-party transcript).
-Options, in rough order of cost: render with a sanitizing step, disable raw
-HTML in marked's options, or accept it explicitly. **Not started — a
-product-intent call, not a mechanical fix.**
+genuinely untrusted input (a shared team repo, a third-party transcript).~~
+
+**Fix:** both render paths now go through `renderMarkdown()` in `app.js`,
+which applies a two-rule marked renderer override:
+
+1. **Raw HTML is dropped, not escaped.** Vault markdown is written in
+   markdown; anything else is noise or an injection attempt. No vault file
+   relies on raw HTML — grepped, zero hits.
+2. **Link schemes restricted.** `http(s)`, protocol-relative, and
+   site-relative (leading `/`, `#`, `?`) hrefs all stay inside Prism's own
+   origin and keep working as real anchors — vault files cross-reference each
+   other that way. Any href with an explicit non-http scheme
+   (`javascript:`, `data:`, `vbscript:`, `file:`) renders as inert text: the
+   words survive, the navigation does not, and a `.md-link-blocked` style
+   makes the degradation legible rather than mysterious.
+
+Deliberately **not** a sanitizer dependency. A sanitizer is the thorough
+answer, but it would reopen the "one vendored library" position F13 just
+settled, and marked's own extension point closes the actual vectors with two
+rules. The href is attribute-escaped, so a quote in a URL cannot break out
+and become a second attribute.
+
+**Measured blast radius: 49 vault files rendered, 0 differ** from stock
+marked. (An earlier estimate of 8 files differing was measured against a
+config that also stripped HTML comments; with comments left to marked's
+default behaviour the hardened output is byte-identical on all 49.)
+
+**New regression suite** `scripts/e2e-verify-f16.js` (44 checks) — asserts
+the hardening is wired in, neutralizes 11 distinct vectors, preserves 10
+normal markdown shapes plus all four legitimate link forms, round-trips an
+attribute-escaping edge case, and holds the full-vault render baseline. It
+loads `renderMarkdown()` out of the shipped `app.js` rather than testing a
+copy, so the suite cannot pass against code the app does not run. Teeth
+verified both ways: restoring raw HTML fails 8 checks, and reinstating a
+direct `marked.parse` call site fails 2.
+
+**One real bug found by the suite while writing it:** the first version of
+the scheme rule allowed only `http(s)`, which silently broke every
+site-relative link in the vault. Caught before commit, not shipped.
 
 ### F15 — Agent and workflow docs describe a door the UI removed ✅ resolved 26 Sep 2026
 ~~F8 removed the "Archive and emit to integration" button on 24 Aug 2026 and
@@ -361,6 +396,15 @@ and left **open** pending a product-intent decision.
 described the Option E door removed by F8) added and resolved — six files,
 three distinct defects, plus a 57-check suite that derives the real menu from
 `app.js` so the documents cannot drift from the code again.
+
+**Amendment 26 Sep 2026 (fourth pass):** F14 closed. It was filed as
+open pending a product decision, but on measurement the decision was much
+cheaper than assumed — a two-rule marked renderer override, no sanitizer
+dependency, and **zero** change to how any of the 49 vault files render. A
+44-check suite now holds that baseline. The lesson for the next session: I
+deferred this as "a product-intent call" without having measured the blast
+radius, and the measurement was the thing that would have made the call
+cheap. Measure before deferring.
 
 A pattern worth naming, now that three items have landed in the same place:
 **F12, F13 and F15 were all invisible to the friction lens**, and two of the
