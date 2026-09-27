@@ -18,6 +18,13 @@ autosave.json
 .DS_Store
 Thumbs.db
 .vscode/
+
+# ── Python bytecode ─────────────────────────────────────────
+# F21 made api-server.py import a sibling module (extract.py), so running the
+# server now writes __pycache__/ next to the source. Those are build artifacts
+# and must never reach the repo.
+__pycache__/
+*.py[cod]
 .idea/
 
 # ── Playwright / debug residue ──────────────────────────────
