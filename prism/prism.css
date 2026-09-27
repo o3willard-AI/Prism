@@ -109,6 +109,15 @@
   .md-viewer blockquote { border-left: 3px solid var(--accent); padding: 8px 16px; background: #f0f4ff; border-radius: 0 6px 6px 0; margin: 12px 0; color: #374151; }
   .md-viewer a { color: var(--accent); }
 
+  /* F14: a link whose scheme is not http(s) renders as inert text. Make the
+     degradation legible instead of mysterious — the words stay, the
+     navigation does not, and the reader can see why. */
+  .md-viewer .md-link-blocked {
+    color: var(--text-secondary);
+    text-decoration: underline dotted;
+    cursor: not-allowed;
+  }
+
   /* ── Editor ──────────────────────────────────────────── */
   .md-editor {
     width: 100%; min-height: 420px; padding: 20px;
