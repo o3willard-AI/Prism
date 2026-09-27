@@ -86,7 +86,7 @@ function toast(msg, isError = false) {
 // ── Navigation ─────────────────────────────────────────────────────────────
 
 const VIEW_TITLES = {
-  dashboard: 'Crafting Table', ingest: 'Ingest Artifact',
+  dashboard: 'Crafting Table',
   knowledge: 'Knowledge Base', workflows: 'Workflows', hypotheses: 'Hypotheses',
   requirements: 'Requirements',
   rationalizations: 'Rationalizations',
@@ -267,7 +267,6 @@ async function renderView(view) {
 
   try {
     if (view === 'dashboard')    await renderDashboard(area);
-    else if (view === 'ingest')  renderIngest(area);
     else if (view === 'knowledge')    await renderKnowledge(area);
     else if (view === 'workflows')    await renderWorkflows(area);
     else if (view === 'hypotheses')       await renderHypotheses(area);
@@ -315,6 +314,39 @@ async function renderDesk(area) {
             <span class="desk-pause-tag">⏸ paused</span>
             <span style="flex:1;font-size:13.5px;font-weight:600">${escHtml(label)}</span>
             <button class="desk-door" onclick="continueWorkflow('${escHtml(p.path)}','${p.lens}','desk-content')">Resume →</button>
+          </div>`;
+        }).join('')}
+      </div>`;
+  }
+
+  // The staged queue. Until now ingestion/unprocessed/ was write-only: the
+  // Ingest page could fill it and the retired wizard was the only thing that
+  // could read it. With both gone, the desk lists it here — otherwise staging
+  // is a place raw thought goes to be lost.
+  let queuedRows = '';
+  let queued = [];
+  try {
+    const list = await apiGet('/list?path=' + encodeURIComponent('ingestion/unprocessed'));
+    queued = (list || []).filter(f => f.type === 'file' && f.name.endsWith('.md')
+                                     && !f.name.startsWith('_'));
+  } catch (e) { /* queue is local and may not exist yet — not an error */ }
+
+  if (queued.length) {
+    queuedRows = `
+      <div class="card" style="margin-top:20px">
+        <div class="section-header" style="margin-bottom:10px">
+          <h3 style="font-size:14px">In the queue</h3>
+          <span style="font-size:12px;color:var(--text-secondary)">
+            ${queued.length} staged · local only, never synced
+          </span>
+        </div>
+        ${queued.map(f => {
+          const label = f.name.replace('.md','').replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/-/g,' ');
+          return `<div class="desk-continue-row">
+            <span style="flex:1;font-size:13.5px">${escHtml(label)}</span>
+            <button class="btn btn-ghost btn-sm" onclick="_deskLoadQueued('${escHtml(f.path)}')">Load →</button>
+            <button class="btn btn-ghost btn-sm" onclick="_deskDiscardQueued('${escHtml(f.path)}')"
+              title="Delete from the queue">🗑</button>
           </div>`;
         }).join('')}
       </div>`;
@@ -372,9 +404,21 @@ async function renderDesk(area) {
 
         <div class="form-label" style="margin-top:18px;margin-bottom:8px">Route it through a lens:</div>
         <div class="desk-doors" id="desk-doors">${lensDoors}</div>
+
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+          <button class="btn btn-ghost btn-sm" onclick="deskStageOnly()"
+            title="Save to the unprocessed queue without creating a lens — refract it later">
+            📥 Not yet — just hold it in the queue
+          </button>
+          <div style="font-size:11.5px;color:var(--text-secondary);margin-top:5px">
+            Raw thought can arrive faster than you can lens it. Staging keeps it local
+            (<code>ingestion/unprocessed/</code>, never synced) until you are ready.
+          </div>
+        </div>
         <div id="desk-error" style="color:#dc2626;font-size:13px;margin-top:10px"></div>
       </div>
 
+      ${queuedRows}
       ${pausedRows}
     </div>`;
 
@@ -411,6 +455,88 @@ function deskLensDoor(lensKey) {
   // A door is an action: pick the lens, go (one click, no start button).
   _desk.lens = lensKey;
   deskSubmit();
+}
+
+// ── Staged queue ───────────────────────────────────────────────────────────
+// Load a staged artifact back into the desk so it can be lensed, or discard it.
+// These live on the desk because the Ingest page (the only other surface) is
+// retired, and the wizard that used to read the queue is gone — without these
+// the queue is write-only and staged thought is lost.
+
+// Unwrap a staged ingest document back to the raw thought. A queued artifact
+// is a full ingest file:
+//
+//     # title
+//     **Type:** … **Date:** … **Private:** … **Provenance:** … **Status:** …
+//     ---            <- opening divider, after the provenance header
+//     <raw thought>
+//     ---            <- closing divider
+//     ## Observations   (empty annotation stubs)
+//
+// The raw thought is BETWEEN the two dividers, so take the text after the
+// FIRST divider and stop at the next one. Feeding the whole wrapper back into
+// the desk would double-wrap it on re-submit. This mirrors what the backend
+// does when scaffolding a lens from an artifact.
+function _rawIngestBody(content) {
+  const lines = String(content || '').split('\n');
+  const open = lines.findIndex(l => l.trim() === '---');
+  if (open < 0) return String(content || '');   // not a wrapper — take it as-is
+  const close = lines.findIndex((l, i) => i > open && l.trim() === '---');
+  const body = close < 0 ? lines.slice(open + 1) : lines.slice(open + 1, close);
+  return body.join('\n').trim();
+}
+
+async function _deskLoadQueued(path) {
+  try {
+    const { content } = await apiGet('/file?path=' + encodeURIComponent(path));
+    const raw = _rawIngestBody(content);
+    const name = path.split('/').pop().replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/\.md$/,'');
+    _desk = { content: raw, type: 'unordered', lens: null, fileLoaded: name };
+    document.getElementById('topbar-title').textContent = 'Crafting Table';
+    await renderDesk(document.getElementById('content-area'));
+    toast('📥 Loaded — pick a lens to refract it, or stage it again');
+  } catch (e) {
+    toast('Could not load that artifact: ' + e.message, true);
+  }
+}
+
+async function _deskDiscardQueued(path) {
+  const name = path.split('/').pop();
+  if (!confirm(`Discard "${name.replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/\.md$/,'')}" from the queue?\n\nThis cannot be undone.`)) return;
+  try {
+    await apiFetch('/file?path=' + encodeURIComponent(path), { method: 'DELETE' });
+    // A private artifact was never mirrored into source/, so nothing else to
+    // clean up. A public one has an immutable source copy that DELETE cannot
+    // reach — say so rather than pretending the delete was total.
+    toast('🗑 Discarded from the queue' + (name.includes('-private') ? '' : ' (source copy retained)'));
+    await renderDesk(document.getElementById('content-area'));
+  } catch (e) {
+    toast('Could not discard: ' + e.message, true);
+  }
+}
+
+async function deskStageOnly() {
+  // Ingest without processing. The Ingest page used to be the only way to
+  // stop here; it is retired, so the desk owns this. Useful when raw thought
+  // arrives faster than it can be lensed — hold it, refract it later.
+  const errEl = document.getElementById('desk-error');
+  const content = _desk.content.trim();
+  errEl.textContent = '';
+  if (!content) { errEl.textContent = 'Add the raw thought first — even staged, it needs to be something.'; return; }
+
+  try {
+    await ingestArtifact({
+      type: _desk.type,
+      title: autoName('seed'),
+      content,
+      is_private: _deskPrivate,
+    });
+  } catch (e) { errEl.textContent = e.message; return; }
+
+  _desk = { content: '', type: 'unordered', lens: null, fileLoaded: null };
+  _deskPrivate = false;
+  toast('📥 Staged in the queue — refract it when you are ready');
+  await renderDesk(document.getElementById('content-area'));
 }
 
 async function deskSubmit() {
@@ -475,14 +601,13 @@ function updateBadges(s) {
 // Three surfaces (Refraction Desk, Ingest page, wizard quick-ingest) each
 // used to build their own /ingest payload — and had already silently
 // diverged: two hardcoded is_private:false, dropping the privacy boundary
-// the user never saw. Now a single builder is the only way an artifact
-// enters the vault, and every surface passes an explicit is_private it
-// owns. There is no default — the flag must be named.
+// the user never saw. F17 retired two of the three; the survivor is the
+// Crafting Table, and it still has exactly one builder.
 //
-// Per-surface private state; each owns a visible control:
-let _deskPrivate = false;   // Refraction Desk (checkbox)
-let _qiPrivate   = false;   // wizard quick-ingest (checkbox)
-// The Ingest page keeps its existing _isPrivate toggle (defined below).
+// Per-surface private state; each owns a visible control.
+// F17 retired both the wizard and the standalone Ingest page, so the Crafting
+// Table is the only ingest surface left and this is its flag.
+let _deskPrivate = false;
 
 async function ingestArtifact({ type, title, content, is_private }) {
   if (!content || !content.trim()) throw new Error('Content cannot be empty.');
@@ -501,165 +626,6 @@ function readTextFile(file, onLoad) {
   reader.onerror = () => toast('Could not read file.', true);
   reader.readAsText(file);
 }
-
-// ── Ingest ─────────────────────────────────────────────────────────────────
-
-let _isPrivate = false;
-
-function renderIngest(area) {
-  _isPrivate = false;
-  area.innerHTML = `
-    <div style="max-width:680px">
-      <div class="card">
-        <p style="font-size:14px;color:var(--text-secondary);margin-bottom:20px">
-          Drop a file or paste raw text. Every artifact lands in
-          <code>ingestion/unprocessed/</code> (local only, never synced) until
-          you promote it. Private artifacts are additionally excluded from all
-          repo pushes.
-        </p>
-
-        <!-- Drag and drop zone -->
-        <div class="drop-zone" id="drop-zone">
-          <input type="file" id="file-input" accept=".md,.txt,.csv,.json,.rtf"
-            onchange="handleFileSelect(this.files)">
-          <div class="dz-icon">📂</div>
-          <div class="dz-label">Drop a file here, or click to browse</div>
-          <div class="dz-sub">.md · .txt · .csv · .json — text files only</div>
-          <div class="dz-loaded" id="dz-loaded" style="display:none"></div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Artifact type</label>
-          <select class="form-select" id="ing-type">
-            <option value="formatted">📄 Formatted or ordered text</option>
-            <option value="unordered">📝 Unordered text</option>
-            <option value="media">🎬 Media (audio / video / image)</option>
-            <option value="application">📦 Application specific (ppt, svg, etc.)</option>
-            <option value="code">💻 Code</option>
-            <option value="dictation">🎤 Dictation</option>
-          </select>
-          <div id="ing-type-hint" style="font-size:11.5px;color:var(--text-secondary);margin-top:5px"></div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Title / short description</label>
-          <div style="display:flex;gap:8px;align-items:stretch">
-            <input class="form-input" id="ing-title" type="text"
-              style="flex:1"
-              placeholder="e.g. Acme Corp discovery call — ops lead">
-            <button class="btn btn-ghost btn-sm" type="button"
-              style="white-space:nowrap;flex-shrink:0"
-              onclick="document.getElementById('ing-title').value=autoName('Ingest');document.getElementById('ing-title').focus()">
-              🎲 Auto Name
-            </button>
-          </div>
-          <div class="form-hint">Becomes the filename. Be specific — you'll search for this later.</div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Content</label>
-          <textarea class="form-textarea" id="ing-content"
-            placeholder="Paste raw transcript, notes, or article text here… (or drop a file above)"></textarea>
-        </div>
-
-        <!-- Private toggle -->
-        <div class="toggle-row" id="private-toggle" onclick="togglePrivate()">
-          <span style="font-size:18px">🔒</span>
-          <div class="toggle-label">
-            <strong>Private</strong>
-            <span id="private-desc">Off — file will be included in repo syncs</span>
-          </div>
-          <div class="toggle-switch" id="toggle-knob"></div>
-        </div>
-
-        <div style="display:flex;gap:10px;align-items:center">
-          <button class="btn btn-primary" onclick="submitIngest()">📥 Ingest artifact</button>
-          <span id="ing-status" style="font-size:13px;color:var(--text-secondary)"></span>
-        </div>
-      </div>
-    </div>`;
-
-  // Wire up drag-and-drop events
-  const zone = document.getElementById('drop-zone');
-  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
-  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
-  zone.addEventListener('drop', e => {
-    e.preventDefault();
-    zone.classList.remove('drag-over');
-    handleFileSelect(e.dataTransfer.files);
-  });
-
-  // F10: auto-classify the legacy ingest form too — same rules, same
-  // sticky override, one shared backend.
-  _classifySurfaces.ing = {
-    selectId: 'ing-type', contentId: 'ing-content', hintId: 'ing-type-hint',
-    filename: '', seq: 0, touched: false, timer: null, lastKey: null,
-  };
-  _classifyWire(_classifySurfaces.ing);
-}
-
-function togglePrivate() {
-  _isPrivate = !_isPrivate;
-  const row  = document.getElementById('private-toggle');
-  const desc = document.getElementById('private-desc');
-  if (_isPrivate) {
-    row.classList.add('private-on');
-    desc.textContent = 'On — filename gets -private suffix, excluded from all repo syncs';
-  } else {
-    row.classList.remove('private-on');
-    desc.textContent = 'Off — file will be included in repo syncs';
-  }
-}
-
-function handleFileSelect(files) {
-  if (!files || files.length === 0) return;
-  readTextFile(files[0], (content, file) => {
-    document.getElementById('ing-content').value = content;
-
-    // Auto-populate title from filename (strip extension, humanize)
-    const titleEl = document.getElementById('ing-title');
-    if (!titleEl.value) {
-      titleEl.value = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
-    }
-
-    // F10: type comes from the classifier (filename + content), replacing
-    // the old hardcoded extension/name-hint list. Sticky human override.
-    const surface = _classifySurfaces.ing;
-    if (surface) { surface.filename = file.name; _classifyTrigger(surface); }
-
-    // Show loaded indicator
-    const loaded = document.getElementById('dz-loaded');
-    loaded.textContent = `✅ ${file.name} loaded (${(file.size/1024).toFixed(1)} KB)`;
-    loaded.style.display = 'block';
-  });
-}
-
-async function submitIngest() {
-  const type      = document.getElementById('ing-type').value;
-  const title     = document.getElementById('ing-title').value.trim();
-  const content   = document.getElementById('ing-content').value.trim();
-  const status    = document.getElementById('ing-status');
-
-  if (!title)   { toast('Please add a title.', true); return; }
-  if (!content) { toast('Content cannot be empty.', true); return; }
-
-  status.textContent = 'Saving…';
-  try {
-    const r = await ingestArtifact({ type, title, content, is_private: _isPrivate });
-    status.textContent = '';
-    document.getElementById('ing-title').value   = '';
-    document.getElementById('ing-content').value = '';
-    document.getElementById('dz-loaded').style.display = 'none';
-    if (_isPrivate) { togglePrivate(); } // reset toggle
-
-    const privLabel = r.private ? ' 🔒 (private — repo-excluded)' : '';
-    toast(`✅ Saved to ${r.path}${privLabel}`);
-  } catch (e) {
-    status.textContent = '';
-    toast(e.message, true);
-  }
-}
-
 // ── Knowledge ──────────────────────────────────────────────────────────────
 
 async function renderKnowledge(area) {
@@ -1797,7 +1763,10 @@ async function wfOptD() {
       toast(`⚠️ Could not send to queue: ${e.message}`, true);
     }
   }
-  await renderView('ingest');
+  // Option D returns the artifact to the staged queue. The Ingest page used to
+  // be where the human landed to see it; that surface is retired and the queue
+  // is now listed on the Crafting Table, so that is where we go.
+  await renderView('dashboard');
 }
 // wfOptE removed with its button (F8) — the integration door does not exist
 // until an integration is configured; see vault/knowledge/integrations/.
