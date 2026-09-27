@@ -28,7 +28,6 @@ INGEST_TYPES = {
     "dictation",
 }
 
-HYPOTHESIS_STATUSES = ["candidate", "proposed", "validated", "demoted", "archived"]
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -382,85 +381,6 @@ def verify_output(shape_key: str, content: str) -> dict:
         "missing": missing,
         "advice": advice,
     }
-
-
-def get_status() -> dict:
-    """Aggregate Prism status stats."""
-    status = {
-        "hypothesis_counts":   {s: 0 for s in HYPOTHESIS_STATUSES},
-        "requirement_counts":  {"draft": 0, "review": 0, "approved": 0, "deprecated": 0},
-        "rationalization_counts": {"draft": 0, "review": 0, "approved": 0, "deprecated": 0},
-        "stakeholder_count": 0,
-        "ingestion_count": 0,
-        "days_since_sweep": None,
-    }
-
-    def count_by_status(folder: Path, count_dict: dict, default: str):
-        if folder.exists():
-            for f in folder.glob("*.md"):
-                if f.name.startswith("_"):
-                    continue
-                meta = parse_frontmatter(f.read_text(encoding="utf-8"))
-                s = meta.get("status", default)
-                if s in count_dict:
-                    count_dict[s] += 1
-
-    count_by_status(DATA_ROOT / "hypotheses",   status["hypothesis_counts"],  "candidate")
-    count_by_status(DATA_ROOT / "requirements",    status["requirement_counts"],    "draft")
-    count_by_status(DATA_ROOT / "rationalizations",status["rationalization_counts"], "draft")
-
-    # Dwell time: days each lens item has been un-emitted, bucketed in 2-day increments
-    # Bucket index = min(days // 2, 15); bucket 15 = "30+ days"
-    DWELL_LENSES = ["requirements", "hypotheses", "rationalizations"]
-    today = datetime.now().date()
-    dwell = {}
-    for lens in DWELL_LENSES:
-        folder = DATA_ROOT / lens
-        counts = [0] * 16
-        if folder.exists():
-            for f in folder.glob("*.md"):
-                if f.name.startswith("_"):
-                    continue
-                meta = parse_frontmatter(f.read_text(encoding="utf-8"))
-                created_str = meta.get("created") or meta.get("date", "")
-                if created_str:
-                    try:
-                        created = datetime.strptime(created_str[:10], "%Y-%m-%d").date()
-                        days = (today - created).days
-                        counts[min(max(days, 0) // 2, 15)] += 1
-                    except ValueError:
-                        pass
-        dwell[lens] = counts
-    status["dwell"] = dwell
-
-    # Stakeholders
-    stk_dir = DATA_ROOT / "stakeholders"
-    if stk_dir.exists():
-        status["stakeholder_count"] = sum(
-            1 for f in stk_dir.glob("*.md") if not f.name.startswith("_")
-        )
-
-    # Ingestion count
-    ing_dir = DATA_ROOT / "ingestion"
-    if ing_dir.exists():
-        status["ingestion_count"] = sum(
-            1 for f in ing_dir.rglob("*.md") if not f.name.startswith("_")
-        )
-
-    # Days since last sweep
-    log_dir = DATA_ROOT / "maintenance" / "log"
-    if log_dir.exists():
-        logs = sorted(log_dir.glob("*.md"), reverse=True)
-        if logs:
-            m = re.search(r"(\d{4}-\d{2}-\d{2})", logs[0].name)
-            if m:
-                try:
-                    sweep_date = datetime.strptime(m.group(1), "%Y-%m-%d")
-                    status["days_since_sweep"] = (datetime.now() - sweep_date).days
-                except ValueError:
-                    pass
-
-    return status
 
 
 # ── Crafting Methods (LCM provenance) ──────────────────────────────────────
@@ -1021,10 +941,7 @@ class PrismHandler(http.server.BaseHTTPRequestHandler):
         path = parsed.path.rstrip("/")
         qs = parse_qs(parsed.query)
 
-        if path == "/status":
-            self.send_json(200, get_status())
-
-        elif path == "/tree":
+        if path == "/tree":
             self.send_json(200, build_tree(DATA_ROOT, DATA_ROOT))
 
         elif path == "/file":

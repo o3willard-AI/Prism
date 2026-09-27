@@ -40,6 +40,16 @@
     font-size: 11px; font-weight: 500;
     background: #f3f4f6; color: var(--text-secondary);
   }
+  /* Attention badge. Used by the sidebar lens badges and by the Workflows
+     view's "defined, not yet runnable" marker — it was referenced in markup
+     but never defined here, so those badges were rendering unstyled. */
+  .badge.warn {
+    background: #fffbeb; color: #b45309; border: 1px solid #fde68a;
+  }
+  /* Runnable marker: the positive counterpart to .badge.warn. */
+  .badge.ok {
+    background: #ecfdf5; color: #15803d; border: 1px solid #bbf7d0;
+  }
   .badge-candidate  { background: #f3f4f6; color: var(--status-candidate); }
   .badge-proposed   { background: #eff6ff; color: var(--status-proposed); }
   .badge-validated  { background: #ecfdf5; color: var(--status-validated); }
