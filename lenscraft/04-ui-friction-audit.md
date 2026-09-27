@@ -619,6 +619,92 @@ Both suites were checked for teeth: disabling the `UX_MIN_ANSWER_CHARS` guard
 fails 5 checks in the live suite and 2 in the static one. A suspender nobody
 can trip is not a suspender.
 
+### F21 — external document ingest: the last functional gap, closed with stdlib only ✅ resolved 27 Sep 2026
+~~External documents (PDF/DOCX/HTML) could not be ingested.~~ The Crafting
+Table now accepts them, and nothing was added to install: `prism/extract.py`
+is pure standard library (zipfile, zlib, html.parser, xml.etree, re).
+
+**Formats:** DOCX, XLSX, PPTX, HTML, RTF, PDF, plus plain text/Markdown/CSV/JSON.
+An unknown extension is *sniffed* by magic bytes, so a `.docx` misnamed
+`.dat` still reads — and when that happens the response says `docx (sniffed)`
+rather than pretending the extension was right.
+
+**The design decision worth defending: refuse loudly, never guess.** A PDF is
+a layout language with font subsetting and encodings; there is no stdlib
+parser for it. So the PDF reader is explicitly *best effort* and **refuses**
+when the extraction is not credible — a length floor (20 chars) *and* a
+legibility ratio (≥85% printable). The refusal says why: "most likely a scan,
+or an image-based document, and Prism does not do OCR. Open it, select the
+text, and paste it in here."
+
+The alternative — return whatever bytes we scraped — would put mojibake in
+the vault looking exactly like something a person wrote, and a lens would
+later refract it as though it were human thought. That is the failure mode
+this whole system is built to prevent, so the reader is allowed to fail. A
+one-paste cost beats silent corruption in a vault meant to hold years of
+thought. **This is also why the length floor is deliberately low**: an
+earlier 200-char version rejected legitimate three-line memos, which are
+exactly the small notes someone is most likely to drop in.
+
+**Two caps, both named, for different reasons.** `UPLOAD_MAX` (32 MB) bounds
+what is read off the socket — the body is read whole before parsing, so an
+unbounded body is an unbounded allocation from an unauthenticated local
+client. `EXTRACT_MAX` (2 MB of text) bounds what is *staged* — a 200 MB dump
+is not an artifact to refract, and it would be copied, diffed and rendered on
+every view after. Both **refuse with an explanation rather than truncating**;
+a truncated document that looks complete is worse than none.
+
+**Two endpoints, because reading a document and filing it are different
+acts.** `/ingest-document` extracts *and* stages into
+`ingestion/unprocessed/`. `/extract-document` extracts only — that is the
+chat-attachment path, and attaching a document to a message must not create a
+file in the vault behind the user's back. An unreadable document returns
+**422, not 400**: the request was well-formed, the document was not readable,
+and telling someone their upload was "invalid" is both untrue and useless.
+
+**Three real bugs, all found by running against genuine bytes rather than
+theory:**
+
+1. **RTF destination handling.** The obvious implementation — mark the
+   enclosing group as skipped when a `\fonttbl` appears — is wrong, and
+   silently so: writers commonly open ONE group around several tables, so the
+   mark is never cleared and **the entire rest of the document is skipped**.
+   The file comes back empty and the refusal says "no readable text", which
+   reads like a bad file rather than a parser bug. Pushing a frame per
+   destination is wrong the other way (the frame gets popped by an unrelated
+   brace and the stack desynchronises). What actually holds: a destination's
+   content runs until the next `\par`/`\line` or the closing brace, so
+   `in_destination` is ended by a paragraph break, and the group stack is kept
+   purely for nesting.
+2. **xlsx sheet names.** Sheet names are keyed by relationship *id*, not by
+   part filename. Without resolving `xl/_rels/workbook.xml.rels`, every sheet
+   is labelled `Sheet1` and the human loses the only meaningful label in the
+   output.
+3. **Corrupt files crashed the server.** A truncated download raised
+   `zipfile.BadZipFile` straight out of the handler — a traceback for what is
+   an everyday event, and one that told the human nothing. Now a bad archive
+   is a refusal: "that .docx is damaged or incomplete."
+
+**A note on `.rtf`:** it was already in the Crafting Table's accept list and
+was being read as plain text — so RTF control codes were being ingested as
+content. F21 makes that a real reader.
+
+**`scripts/e2e-verify-f21.js` (65 checks)** builds genuine fixtures — a
+docx Word would open, a structurally valid PDF, RTF with a real font table —
+because a mocked parser tests the mock. Teeth verified three ways: making the
+PDF never refuse fails 4 checks; reverting the RTF destination bug fails the
+extraction checks; making the read-only path stage fails 3. It also guards the
+security posture (traversal, privacy suffix, both caps) and asserts no
+third-party library is ever referenced.
+
+**And the suite found a flaw in itself, which is the part worth keeping.** An
+early "teeth" check flipped the read-only path back to staging and the suite
+still reported 61/61 green — because it was talking to a **stale server
+process** that had not been restarted. A suite that exercises a long-running
+process can be confidently green about code that is not running. F21 now
+opens with a freshness probe that stages via `/ingest-document` and asserts
+`/extract-document` does *not*, and says "restart the server if this fails".
+
 ---
 
 ## The pattern in both columns

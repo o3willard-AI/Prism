@@ -379,9 +379,9 @@ async function renderDesk(area) {
           oninput="_desk.content = this.value">${escHtml(_desk.content)}</textarea>
 
         <div class="desk-drop" id="desk-drop" onclick="document.getElementById('desk-file').click()">
-          <input type="file" id="desk-file" accept=".md,.txt,.csv,.json,.rtf"
+          <input type="file" id="desk-file" accept=".md,.txt,.csv,.json,.rtf,.html,.htm,.pdf,.docx,.xlsx,.pptx"
             style="display:none" onchange="deskFileSelect(this.files)">
-          <span id="desk-drop-label">📂 or drop / browse a file instead</span>
+          <span id="desk-drop-label">📂 or drop / browse a file instead — text, PDF, or Office documents</span>
         </div>
 
         <details style="margin-top:14px">
@@ -440,7 +440,16 @@ async function renderDesk(area) {
 
 function deskFileSelect(files) {
   if (!files?.length) return;
-  readTextFile(files[0], (content, file) => {
+  const file = files[0];
+  // F21: a binary document (docx/xlsx/pptx/pdf) cannot be read as text — the
+  // bytes would arrive mangled and the server would be asked to parse mojibake.
+  // Route those through the document reader instead, which stages the file
+  // directly and reports what the extractor made of it.
+  if (_isBinaryDocument(file.name)) {
+    deskUploadDocument(file);
+    return;
+  }
+  readTextFile(file, (content) => {
     _desk.content = content;
     _desk.fileLoaded = file.name;
     document.getElementById('desk-content').value = content;
@@ -449,6 +458,38 @@ function deskFileSelect(files) {
     const surface = _classifySurfaces.desk;
     if (surface) { surface.filename = file.name; _classifyTrigger(surface); }
   });
+}
+
+// F21: upload a document, stage it, and report honestly. On refusal the
+// server's own message is shown — "it is a scan, paste the text in" is the
+// only useful thing to say, and it is written to be read by a person.
+async function deskUploadDocument(file) {
+  const label = document.getElementById('desk-drop-label');
+  if (label) label.textContent = '⏳ Reading ' + file.name + '…';
+  try {
+    const res = await ingestDocument(file, {
+      is_private: _deskPrivate,
+      type: _desk.type,
+    });
+    // The extracted text goes into the desk, not straight to the queue: the
+    // human still chooses a lens. Staging a document without showing what was
+    // extracted would make the reader a black box.
+    _desk.content = '';
+    _desk.fileLoaded = file.name;
+    _desk.documentStaged = res;
+    const ta = document.getElementById('desk-content');
+    if (ta) ta.value = '';
+    if (label) {
+      label.textContent = '✅ ' + file.name + ' staged (' +
+        res.chars.toLocaleString() + ' characters, ' + res.extractor + ')';
+    }
+    _deskLoadQueued();
+    toast('Staged from ' + file.name + ' — ' + res.chars.toLocaleString() +
+          ' characters via the ' + res.extractor + ' reader. Choose a lens to refract it.');
+  } catch (err) {
+    if (label) label.textContent = '⚠️ ' + file.name + ' could not be read';
+    toast(err.message, true);
+  }
 }
 
 function deskLensDoor(lensKey) {
@@ -631,6 +672,59 @@ function readTextFile(file, onLoad) {
   reader.onerror = () => toast('Could not read file.', true);
   reader.readAsText(file);
 }
+
+// F21: extensions that are text as stored. Anything outside this set is
+// BINARY and must go through ingestDocument() as raw bytes — reading a .docx
+// or .pdf as text and shipping those "characters" to the server is how you
+// end up with mojibake in the vault and no idea why.
+const _TEXT_EXT = /\.(md|markdown|txt|text|csv|tsv|json|log|ya?ml|html?|rtf)$/i;
+
+// True when the file needs the document reader rather than a text read.
+function _isBinaryDocument(name) {
+  return !_TEXT_EXT.test(name || '');
+}
+
+// Upload a document for server-side extraction. Returns the parsed response,
+// or throws with the server's own explanation so the surface can show the
+// human what to do next rather than a generic failure.
+async function ingestDocument(file, { is_private, type, stage = true } = {}) {
+  if (!file) throw new Error('No file selected.');
+
+  // Read as ArrayBuffer: the bytes must survive the trip intact.
+  const buf = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = e => resolve(e.target.result);
+    r.onerror = () => reject(new Error(`Could not read ${file.name}.`));
+    r.readAsArrayBuffer(file);
+  });
+
+  // stage=false is the read-only path (chat attachments): the server returns
+  // the extracted text without filing an artifact, so attaching a document to
+  // a message does not create a file in the vault behind the user's back.
+  const url = stage ? '/prism/api/ingest-document' : '/prism/api/extract-document';
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'X-File-Name': encodeURIComponent(file.name),
+      'X-Private': is_private ? 'true' : 'false',
+      'X-Artifact-Type': type || '',
+    },
+    body: buf,
+  });
+
+  let body = null;
+  try { body = await res.json(); } catch { /* non-JSON error page */ }
+  if (!res.ok) {
+    // Surface the server's reason verbatim — it is written for the human,
+    // and it is the only thing that tells someone with a scanned PDF what
+    // to do next. A generic "upload failed" would be strictly less useful.
+    throw new Error((body && body.error) || `Upload failed (${res.status}).`);
+  }
+  return body;
+}
+
 // ── Knowledge ──────────────────────────────────────────────────────────────
 
 async function renderKnowledge(area) {
@@ -2885,6 +2979,27 @@ function _chatPickFile() { /* native file input handles it */ }
 function _chatHandleFiles(files) {
   if (!files || files.length === 0) return;
   Array.from(files).forEach(file => {
+    // F21: attachments are read as text today, so a binary document would
+    // arrive as mojibake. Route those through the document reader instead and
+    // attach the EXTRACTED text — the agent should read the words, not the
+    // container. The original filename is kept in the chip so provenance
+    // survives the conversion.
+    if (_isBinaryDocument(file.name)) {
+      ingestDocument(file, { is_private: true, stage: false })
+        .then(res => {
+          _chat.pending.push({
+            name: file.name,
+            content: res.text || '',
+            extracted: res.extractor,
+          });
+          _chatRenderPending();
+          toast('Read ' + file.name + ' — ' +
+                (res.chars || 0).toLocaleString() + ' characters via the ' +
+                res.extractor + ' reader.');
+        })
+        .catch(err => toast(err.message, true));
+      return;
+    }
     const reader = new FileReader();
     reader.onload = e => {
       _chat.pending.push({ name: file.name, content: e.target.result });

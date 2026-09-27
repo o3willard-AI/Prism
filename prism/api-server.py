@@ -15,6 +15,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
+# F21: the document extractor is a sibling module, not an installed package.
+# Prism ships no build step and no site-packages, so the script's own
+# directory has to be importable regardless of the working directory the
+# server was started from — otherwise `python3 prism/api-server.py` from the
+# repo root and from prism/ behave differently.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from extract import UnsupportedDocument, extract_document  # noqa: E402
+
 PORT = 8082
 # Data directory lives next to this script
 DATA_ROOT = Path(__file__).parent / "vault"
@@ -27,6 +35,26 @@ INGEST_TYPES = {
     "code",
     "dictation",
 }
+
+# F21: external document ingest. Two independent caps, and both matter.
+#
+# UPLOAD_MAX bounds what the server will read off the socket. The request is
+# read whole into memory before it is parsed, so an unbounded body is an
+# unbounded allocation from an unauthenticated local client — cheap to
+# trigger, and there is no streaming parser underneath to relieve it.
+#
+# EXTRACT_MAX bounds what will be staged. A 200MB text dump is not an
+# "artifact to refract", it is a file the person put in the wrong place, and
+# it would then be copied, diffed and rendered on every subsequent view. The
+# refusal message says so, rather than truncating silently — a truncated
+# document that looks complete is worse than a refused one.
+UPLOAD_MAX = 32 * 1024 * 1024        # 32 MB on the wire
+EXTRACT_MAX = 2 * 1024 * 1024         # 2 MB of extracted text
+
+# Formats the client should offer in the file picker. This is UI convenience
+# only — the server's extension dispatch plus magic-byte sniffing is what
+# actually decides, so a file arriving by any other route still works.
+INGEST_ACCEPT = ".md,.txt,.csv,.json,.rtf,.html,.htm,.pdf,.docx,.xlsx,.pptx"
 
 
 
@@ -973,6 +1001,145 @@ class PrismHandler(http.server.BaseHTTPRequestHandler):
         else:
             self.send_error_json(404, "Not found")
 
+    def handle_ingest_document(self, stage=True):
+        """F21: extract text from an uploaded document.
+
+        With stage=True the extracted text is filed as an artifact in
+        ingestion/unprocessed/. With stage=False only the text comes back —
+        that is the chat-attachment path, where reading a document must not
+        quietly create a file in the vault as a side effect.
+
+        The contract with the human matters more than the plumbing. When a
+        document cannot be read, the response carries the extractor's own
+        explanation — "it is a scan, paste the text in instead" — rather than
+        a generic 400. A person who just dropped a scanned PDF needs to be
+        told what to do next, not told the request was invalid.
+        """
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+        except (TypeError, ValueError):
+            return self.send_error_json(400, "Could not read the upload size.")
+
+        if length <= 0:
+            return self.send_error_json(400, "No file was sent.")
+        if length > UPLOAD_MAX:
+            return self.send_error_json(
+                413,
+                f"That file is {length // (1024 * 1024)} MB. Prism's limit is "
+                f"{UPLOAD_MAX // (1024 * 1024)} MB — if it really is a document "
+                "to refract, open it and paste the relevant text in instead."
+            )
+
+        raw = self.rfile.read(length)
+        if len(raw) != length:
+            return self.send_error_json(400, "The upload was cut short — try again.")
+
+        try:
+            filename = unquote(self.headers.get("X-File-Name", "") or "")
+        except Exception:
+            filename = ""
+        if not filename:
+            return self.send_error_json(
+                400, "Prism could not tell what file that was — the name is missing."
+            )
+
+        # ---- extraction -------------------------------------------------
+        try:
+            text, extractor = extract_document(raw, filename)
+        except UnsupportedDocument as exc:
+            # 422: the request was well-formed, the document was not readable.
+            # The distinction is worth keeping — 400 would tell the human the
+            # upload was malformed, which is not true and not actionable.
+            return self.send_error_json(422, str(exc))
+        except MemoryError:
+            return self.send_error_json(
+                413, "That document was too large for Prism to open safely."
+            )
+        except Exception as exc:  # a parser bug must not read as a bad file
+            return self.send_error_json(
+                500,
+                f"Prism hit an unexpected error reading that document ({type(exc).__name__}). "
+                "The file was not staged.",
+            )
+
+        if not text.strip():
+            return self.send_error_json(
+                422,
+                "Prism read that file but it contained no text. If it is a scan or "
+                "an image document, Prism cannot read it — paste the text in instead.",
+            )
+        if len(text) > EXTRACT_MAX:
+            return self.send_error_json(
+                413,
+                f"That document extracted to {len(text) // 1024} KB of text, over Prism's "
+                f"{EXTRACT_MAX // 1024} KB limit. Prism did not stage it, because a "
+                "truncated document that looks complete is worse than none. Paste the "
+                "relevant section instead.",
+            )
+
+        result = {
+            "ok": True,
+            "extractor": extractor,
+            "chars": len(text),
+            "bytes": len(raw),
+            "filename": filename,
+            "text": text,
+        }
+
+        if not stage:
+            # Extraction only — no vault write. The chat path wants the words,
+            # not an artifact.
+            return self.send_json(200, result)
+
+        # ---- stage it ---------------------------------------------------
+        title = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        if "." in title:
+            title = title.rsplit(".", 1)[0]
+        title = title.strip() or "untitled"
+
+        artifact_type = self.headers.get("X-Artifact-Type", "").strip().lower()
+        if artifact_type not in INGEST_TYPES:
+            artifact_type = "application"      # an imported document
+        is_private = (self.headers.get("X-Private", "") or "").lower() in ("1", "true", "yes")
+
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        safe_title = re.sub(r"[^\w\-]", "-", title.lower())[:40].strip("-")
+        privacy_suffix = "-private" if is_private else ""
+        stored_name = f"{date_str}-{safe_title}{privacy_suffix}.md"
+        rel_path = f"ingestion/unprocessed/{stored_name}"
+
+        source_note = (f"`{filename}` · extracted with the {extractor} reader · "
+                       f"{len(raw):,} bytes in, {len(text):,} characters out")
+
+        file_content = f"""# {title}
+
+**Type:** {artifact_type}
+**Date:** {date_str}
+**Private:** {"yes" if is_private else "no"}
+**Source document:** {source_note}
+**Status:** unprocessed
+
+---
+
+{text}
+
+---
+
+## Observations
+<!-- Direct quotes, factual claims -->
+
+## Interpretations
+<!-- Agent or PM framing of above -->
+
+## Hypotheses
+<!-- Testable beliefs surfaced -->
+"""
+        err = write_file(rel_path, file_content)
+        if err:
+            return self.send_error_json(400, err)
+
+        self.send_json(200, {**result, "path": rel_path, "type": artifact_type})
+
     def read_body(self):
         try:
             length = int(self.headers.get("Content-Length", 0))
@@ -1069,6 +1236,20 @@ class PrismHandler(http.server.BaseHTTPRequestHandler):
             if err:
                 return self.send_error_json(400, err)
             self.send_json(200, {"ok": True, "path": body["path"]})
+
+        elif path == "/ingest-document":
+            # F21: external document ingest. The browser sends the raw bytes
+            # and this server extracts the text, so the extraction logic lives
+            # in exactly one place and the client stays a thin uploader.
+            self.handle_ingest_document(stage=True)
+
+        elif path == "/extract-document":
+            # F21: extraction WITHOUT staging. The chat attachment path needs
+            # the text to show the agent, but it must not drop a file in the
+            # vault as a side effect of someone attaching a document to a
+            # message — that would create artifacts nobody asked for. Reading
+            # a document and filing it are two different acts.
+            self.handle_ingest_document(stage=False)
 
         elif path == "/ingest":
             body = self.read_body()
