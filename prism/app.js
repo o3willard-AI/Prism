@@ -591,10 +591,15 @@ async function deskSubmit() {
 
 function updateBadges(s) {
   // Badges now come straight from GET /lenses (single source of truth).
+  //
+  // A badge count of 0 is a real count, not "no data". `b.x || '–'` rendered a
+  // dash for every empty lens, so a fresh install showed three dashes where it
+  // should have shown three zeros. Only null/undefined/'' mean "not loaded".
+  const n = (v) => (v === null || v === undefined || v === '') ? '–' : String(v);
   const b = s.badges || {};
-  document.getElementById('badge-hyp').textContent = b.hypotheses || '–';
-  document.getElementById('badge-req').textContent = b.requirements || '–';
-  document.getElementById('badge-rat').textContent = b.rationalizations || '–';
+  document.getElementById('badge-hyp').textContent = n(b.hypotheses);
+  document.getElementById('badge-req').textContent = n(b.requirements);
+  document.getElementById('badge-rat').textContent = n(b.rationalizations);
 }
 
 // ── F9: one ingest path, one private decision ──────────────────────────────
@@ -755,6 +760,16 @@ async function openWorkflowFile(relPath) {
 // This is the same door-state discipline F8 applied to the integration
 // option: a workflow becomes runnable when its runner is written, and the
 // badge clears by itself because both sides read _WF_RUNNERS.
+//
+// NOTE on the title text: it is built as a single-line string deliberately.
+// Splitting it across source lines with a trailing `+` puts a literal newline
+// INSIDE the HTML attribute, and the browser then ends the attribute value at
+// the line break — so the tooltip silently truncates. Only a rendered DOM
+// shows this; the source reads fine. (F19 caught it.)
+
+const _WF_NOT_RUNNABLE_TITLE =
+  'Defined in the vault, but app.js has no runner for it yet — the Crafting ' +
+  'Table cannot launch it. Writing the runner makes it runnable.';
 
 function _wfIdFromPath(relPath) {
   // workflows/<id>/README.md  ->  <id>
@@ -768,9 +783,8 @@ function _wfRunnerBadge(relPath) {
   if (_wfHasRunner(id)) {
     return `<span class="badge ok" title="app.js has a runner for this workflow">▶ runnable</span>`;
   }
-  return `<span class="badge warn" title="Defined in the vault, but app.js has no runner for it yet — "
-    + "the Crafting Table cannot launch it. Writing the runner makes it runnable.">
-    ⚠️ defined, not yet runnable</span>`;
+  return `<span class="badge warn" title="${escHtml(_WF_NOT_RUNNABLE_TITLE)}">` +
+    `⚠️ defined, not yet runnable</span>`;
 }
 
 function renderTreeNode(container, nodes, contentId) {

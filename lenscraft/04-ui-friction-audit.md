@@ -484,6 +484,60 @@ ingested. Both surfaces accept `.md .txt .csv .json .rtf` and read via
 Parsing those means either a dependency (which F13 just settled against) or a
 conversion step — a piece of work, not a cleanup. Not started.
 
+### F19 — A real browser check; two rendering bugs only a DOM could find ✅ resolved 27 Sep 2026
+~~Every other suite drives `app.js` in a Node VM with a stubbed DOM. That is
+fast and honest about application logic, but a stub cannot tell you whether
+the page RENDERS: whether a relative `<script src>` resolves, whether a
+stylesheet applies, whether an `onclick` reaches a global, whether markdown
+becomes real elements. Those were exactly the things F17/F18 changed, and
+exactly what nothing covered.~~
+
+**Fix:** `scripts/e2e-verify-f19.js` (44 checks) runs the SPA in **real
+Chrome** over the DevTools Protocol, driving it through real clicks. No npm
+dependency — `scripts/lib/cdp.js` is a small stdlib WebSocket/CDP client, so
+the stdlib-only constraint holds. It uses the Playwright-cached Chrome for
+Testing binary, or any Chrome via `PRISM_CHROME`.
+
+**It immediately found two real bugs, both invisible to every other check:**
+
+1. **Empty lens badges rendered a dash instead of `0`.** `updateBadges()` used
+   `b.requirements || '–'`, and `0` is falsy — so a fresh install showed three
+   dashes where it should have shown three zeros. The API was returning
+   `requirements: 0` the whole time; the badge lied about it. Now only
+   `null`/`undefined`/`''` mean "not loaded".
+2. **The "not yet runnable" tooltip silently truncated.** The title was
+   written as a multi-line template literal with a trailing `+`, which puts a
+   literal **newline inside the HTML attribute**. The browser ends the
+   attribute value at the line break, so the tooltip stopped mid-sentence. The
+   source reads perfectly; only a rendered DOM shows it. Now a single-line
+   string, passed through `escHtml`.
+
+Both shipped in F17 and are exactly the class of defect a stubbed DOM cannot
+catch: a falsy-zero coercion, and a newline inside an attribute.
+
+**One more, in the test harness itself:** my first front door (used because
+port 80 needs root) stripped the `Host` header when proxying, which made
+F12's same-origin guard reject the real app's own browser requests. That is
+worth recording — **the guard's Host-preservation requirement is a real
+deployment constraint, not a theoretical one.** Both shipped front doors
+satisfy it (`ProxyPreserveHost On` / Caddy default); anything that does not
+will break the app. F19 now runs against a front door that preserves Host, and
+the README's security-posture section already warns about it.
+
+**Coverage added:** the page boots with no console errors and no uncaught
+exceptions; all scripts are same-origin; the stylesheet applies; the sidebar
+is exactly the six expected views with the retired Ingest item gone; the desk
+renders all its doors; **staging works through real clicks** (type → stage →
+queue card appears → load → raw thought returns without its ingest wrapper →
+discard); markdown becomes real elements and F14's hardening holds in a real
+DOM (`<img onerror>` stripped, `javascript:` link inert, no XSS executed);
+and the Workflows view labels runner status from the registry.
+
+Teeth verified: restoring the CDN `<script src>` fails 2 checks.
+
+**Note on exit codes:** `3` means "no browser available" — distinct from `1`
+("checks failed") — so a missing Chrome is never mistaken for a regression.
+
 ---
 
 ## The pattern in both columns

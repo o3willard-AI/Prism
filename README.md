@@ -191,3 +191,29 @@ communication into agentic context**. See the project history in commits.
 ## License
 
 MIT — see LICENSE.
+
+---
+
+## Tests
+
+```
+scripts/e2e-verify*.js          node   the regression suites
+scripts/e2e-verify-f19.js       node   the SPA in a REAL browser (Chrome, no npm)
+```
+
+The other suites run `app.js` in a Node VM with a stubbed DOM. F19 drives the
+real page in real Chrome over the DevTools Protocol, because a stub cannot
+tell you whether the page *renders* — and that is where two shipped bugs hid
+(a `0` badge shown as a dash, and a tooltip truncated by a newline inside an
+HTML attribute).
+
+F19 needs a browser and exits **3** if it cannot find one, so "no Chrome" is
+never mistaken for "checks failed". It uses the Playwright-cached Chrome for
+Testing binary, or any Chrome via `PRISM_CHROME`:
+
+```
+npx playwright install chromium      # if you have no Chrome
+```
+
+It also needs the stack running and a front door that **preserves `Host`** (see
+Security posture above).
