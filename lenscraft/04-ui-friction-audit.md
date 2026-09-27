@@ -538,6 +538,66 @@ Teeth verified: restoring the CDN `<script src>` fails 2 checks.
 **Note on exit codes:** `3` means "no browser available" — distinct from `1`
 ("checks failed") — so a missing Chrome is never mistaken for a regression.
 
+### F20 — UX Bridge runner written; the last declared-but-unrunnable workflow is now real ✅ resolved 27 Sep 2026
+~~`ux-bridge-default` was the one workflow in the vault with a complete
+definition, an agent spec, a skill and an 11-field process document — and no
+runner in `app.js`. F17 made that honest by labelling it
+**⚠️ defined, not yet runnable**, which is the correct state for a capability
+that does not exist. This entry records writing the runner.~~
+
+**What makes UX Bridge different from the other three runners:** it does not
+take a shot and finish. It *interviews the PM one question at a time* until
+`(validated fields / 11) × 100 ≥ 95`, then compiles the UX Hand-off
+Specification. So its step machine is a loop — `awaiting-bridge` ⇄
+`interview` → `post-processing` — not the ladder the other three use.
+
+**Two design decisions worth recording:**
+
+1. **The prompt is stateful.** The skill's loop carries state, so a stateless
+   prompt would restart the interview every turn. `_wfUxBridgePrompt()` gathers
+   the PM's prior answers and appends them as a numbered log, with an explicit
+   "do not re-ask anything already answered". The "one question at a time" rule
+   exists precisely because batching degrades answer quality; restarting each
+   turn would undermine it just as badly.
+
+2. **An ANSWER is not agent output, so it is not shape-verified.** F2's
+   paste-back check assumes the human pastes a finished artifact and validates
+   its structure. In an interview the human pastes their *answer*, which
+   matches neither kind of the shape — it came back `unrecognized` and the loop
+   stalled on a red card forever. **This was caught only by driving the loop
+   live, not by any static check.** The fix: a cheap structural probe first —
+   a paste carrying the spec heading goes through the real F2 check (and, on a
+   match, the terminal write); anything else is an answer and simply advances
+   the loop. Prism carries the answer forward; the *agent* judges whether the
+   field is satisfied. Grading answers is not the machine's job (GN-009).
+
+**The shape (`ux-handoff-spec`, in `api-server.py`)** has two kinds
+discriminated by structure, not by a self-declared label: `question`
+(a question mark plus a rationale for asking) and `spec` (the spec heading
+plus **all 11 numbered section headings**). The numbered headings are the
+point — they are what distinguishes a real spec from a document that merely
+discusses accessibility, and they are why the check can be trusted to gate the
+write. Verified against 5 discriminating cases including unnumbered headings,
+which correctly come back `partial`.
+
+**Emission differs too:** the spec lands in `vault/requirements/` at status
+**`ux-ready`**, not the generic `review` the other terminal shapes use — that
+status is the signal the UX team reads, and the skill's Output Handling table
+specifies it.
+
+**The badge cleared itself.** No change was needed to the Workflows view: F17
+built the badge from `_WF_RUNNERS`, so adding one line to the registry flipped
+ux-bridge from ⚠️ to ▶ with zero view changes. That is the property F17's
+design promised, now demonstrated rather than asserted. F17's and F19's suites
+were updated to assert the new truth — and F17's registry count is now derived
+from the vault rather than hardcoded, so it will not drift again.
+
+**Two suites:** `scripts/e2e-verify-f20.js` (63 checks) asserts the runner's
+shape statically; `scripts/e2e-verify-f20-loop.js` (17 checks) drives the
+whole interview against the live backend and proves the property that matters
+most — **a clarifying question never writes to the lens file and leaves status
+untouched, while a spec writes at `ux-ready` with the Genesis seed preserved.**
+
 ---
 
 ## The pattern in both columns
