@@ -2028,6 +2028,15 @@ function _wfHypDocSynthPrompt(path, type, content) {
 
 const UX_ANSWER_MARK = '## UX Interview (Prism log)';
 
+// Answers on this path are NOT shape-verified (deliberately — an answer is not
+// agent output; see _wfUxRespondMaybeSpec). This floor is the suspender: long
+// enough that no real answer to a UX field is rejected, short enough to catch
+// a stray keystroke or an accidental paste. Below it, Prism refuses and says
+// why rather than letting a fragment become "a validated answer" the agent
+// has been told to trust. 20 characters ≈ a short sentence, which is the
+// shortest thing worth accepting as an answer or an explicit N/A.
+const UX_MIN_ANSWER_CHARS = 20;
+
 async function _wfUxInit() {
   // F3: shared resume — replay the real session, restore the paused step.
   if (await _wfResumeFromPause()) return;
@@ -2128,15 +2137,49 @@ function _wfUxRespond(userText) {
 }
 
 async function _wfUxRespondMaybeSpec(userText) {
-  // The paste is either the PM's answer to the last question, or the agent's
-  // finished specification. Cheap structural probe first: only a document
-  // carrying the spec heading can possibly be a spec, so ordinary answers skip
-  // the round-trip entirely.
+  // The paste is either the PM's answer to a question, or the agent's finished
+  // specification. Cheap structural probe first: only a document carrying the
+  // spec heading can possibly be a spec, so ordinary answers skip the
+  // round-trip entirely.
   const looksLikeSpec = /UX\s*[-–]?\s*Hand[-\s]?off\s*Specification/i.test(userText || '');
-  if (!looksLikeSpec) { _wfUxAdvance(); return; }
-  // It claims to be a spec — verify it properly, and let F2 handle the verdict
-  // (match → written at ux-ready; partial/unrecognized → steering doors).
-  _wfVerifyPasted(userText, 'ux-handoff-spec');
+  if (looksLikeSpec) {
+    // It claims to be a spec — verify it properly, and let F2 handle the
+    // verdict (match → written at ux-ready; partial/unrecognized → steering
+    // doors).
+    _wfVerifyPasted(userText, 'ux-handoff-spec');
+    return;
+  }
+  // Suspenders on the answer path. The spec gate is the one that matters, and
+  // it is strict; but answers bypass it by design, so the cheap failure modes
+  // are checked here instead of trusting the agent to notice them:
+  //
+  //   empty    — the send button is reachable with no text at all
+  //   too thin — a fragment that cannot be an answer to a real question
+  //
+  // Both are refused with an explanation rather than silently carried into
+  // the answer log, where they would quietly become "a validated answer" the
+  // agent has been told to trust. Anything longer is passed through: judging
+  // answer QUALITY is the agent's call, not Prism's (GN-009).
+  const answer = (userText || '').trim();
+  if (answer.length === 0) {
+    _chatAgentSay('That came through empty. The bridge is waiting on an **answer** to the ' +
+      'last question — type or dictate one, or paste the finished specification if the ' +
+      'agent has reached 95%.');
+    _wfRerenderThread();
+    return;
+  }
+  if (answer.length < UX_MIN_ANSWER_CHARS) {
+    _chatAgentSay(
+      `⚠️ That is only **${answer.length} characters**, which is too thin to be an answer ` +
+      `to a UX field. It was not added to the interview log — the agent would treat it ` +
+      `as a validated answer and build the spec on it.\n\n` +
+      `If that really is everything the field needs, say so in a sentence and it will ` +
+      `be accepted as an explicit N/A.`
+    );
+    _wfRerenderThread();
+    return;
+  }
+  _wfUxAdvance();
 }
 
 function _wfUxAdvance() {

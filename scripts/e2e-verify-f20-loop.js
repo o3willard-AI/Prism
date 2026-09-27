@@ -60,6 +60,7 @@ vm.runInContext(app, sandbox, { timeout: 40000 });
 const run = (e) => vm.runInContext(e, sandbox, { timeout: 40000 });
 
 let pass = 0, fail = 0;
+const section = (s) => console.log('\n' + s);
 const check = (n, c, d) => { if (c) { console.log('  PASS ' + n); pass++; }
   else { console.log('  FAIL ' + n + (d ? '  — ' + d : '')); fail++; } };
 
@@ -197,6 +198,81 @@ TODO
   check('the spec content is preserved', /Must not block the UI thread/.test(final.content));
   check('the Genesis seed is preserved',
         /Analysts need to export their datasets in bulk/.test(final.content));
+
+  // ── Suspenders on the unverified answer path ────────────────────────────
+  // A real answer must pass; a fragment and an empty paste must not, and
+  // neither may enter the answer log — the agent is told to treat logged
+  // answers as validated.
+  section('Answer-path suspenders');
+  // Count the logged answers in the newest prepared prompt. A refusal pushes a
+  // plain agent message with no codeBlock, so scan backwards for the last
+  // prompt rather than assuming it is the newest message.
+  //
+  // NOTE: _wfUxBridgePrompt logs EVERY user message, not just interview
+  // answers — the spec paste is a user message too. So the absolute count is
+  // not "answers to questions"; the meaningful assertions are the deltas:
+  // a refusal adds NOTHING, an accepted answer adds exactly ONE.
+  const logLen = () => run(`(() => {
+    for (let i = _chat.messages.length - 1; i >= 0; i--) {
+      const p = _chat.messages[i].codeBlock;
+      if (!p) continue;
+      const m = p.match(/^\\*\\*Answer \\d+:\\*\\*.*$/gm);
+      return m ? m.length : 0;
+    }
+    return 0; })()`);
+  const newestPrompt = () => run(`(() => {
+    for (let i = _chat.messages.length - 1; i >= 0; i--) {
+      if (_chat.messages[i].codeBlock) return _chat.messages[i].codeBlock;
+    }
+    return ''; })()`);
+  const lastText = () => run(`(() => {
+    const m = _chat.messages[_chat.messages.length-1] || {};
+    return m.text || ''; })()`);
+
+  const beforeLog = await logLen();
+
+  await run(`_wfUxRespondMaybeSpec('too short')`);
+  await sleep(300);
+  check('a 9-character fragment is refused',
+        /too thin/i.test(lastText()), lastText().slice(0, 80));
+  check('the refusal names the character count', /9 characters/.test(lastText()),
+        lastText().slice(0, 120));
+  check('a refused fragment does not enter the answer log',
+        (await logLen()) === beforeLog, `${beforeLog} -> ${await logLen()}`);
+  check('the refusal did not advance the step',
+        run('_chat.wfStep') === 'post-processing', run('_chat.wfStep'));
+
+  await run(`_wfUxRespondMaybeSpec('   ')`);
+  await sleep(300);
+  check('an empty answer is refused', /came through empty/i.test(lastText()),
+        lastText().slice(0, 80));
+  check('an empty answer does not enter the answer log',
+        (await logLen()) === beforeLog);
+
+  // The real answer must arrive the way a real one does: a user message
+  // pushed onto the thread FIRST, then dispatch (see _wfChatSend, app.js:1564).
+  // Calling _wfUxRespondMaybeSpec() alone would bypass the message log, and the
+  // answer log is built from that log — so the test has to go through the same
+  // sequence the UI uses, or it is testing a path the app never takes.
+  run(`_chat.messages.push({ role: 'user', text: 'The user sees a friendly inline error and a retry link.', attachments: [] })`);
+  await run(`_wfUxRespondMaybeSpec('The user sees a friendly inline error and a retry link.')`);
+  await sleep(500);
+  // The invariant that matters is that dispatch ADDED something the refusals
+  // did not. An exact +1 is not assertable here: the log also carries the spec
+  // paste (a user message like any other), so the absolute count is a function
+  // of the whole interview, not of this one turn. What must hold is: the log
+  // grew, and it grew by exactly the one answer — proven below by the refusal
+  // strings being absent and this answer's text being present.
+  check('a real answer IS accepted (the log grew past the refusal baseline)',
+        (await logLen()) > beforeLog, `${beforeLog} -> ${await logLen()}`);
+  check('the real answer advanced the interview step',
+        run('_chat.wfStep') === 'interview', run('_chat.wfStep'));
+  const np = await newestPrompt();
+  check('the accepted answer TEXT is in the re-issued prompt',
+        /friendly inline error and a retry link/.test(np),
+        String(np).slice(-160));
+  check('the refused fragments did not enter the answer log',
+        !/too short/.test(np) && !/came through empty/.test(np));
 
   // cleanup. The session auto-save also writes a <lens>-chat.md sidecar, and
   // DELETE /file does not remove sidecars (only deleteThought does), so remove

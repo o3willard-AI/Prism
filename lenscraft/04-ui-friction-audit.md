@@ -571,6 +571,20 @@ Specification. So its step machine is a loop — `awaiting-bridge` ⇄
    the loop. Prism carries the answer forward; the *agent* judges whether the
    field is satisfied. Grading answers is not the machine's job (GN-009).
 
+   That leaves the answer path ungated, which is the honest cost. The
+   suspender is that the two cheap failure modes are refused locally instead of
+   being silently logged as "a validated answer" the agent has been told to
+   trust: **empty** (the send button is reachable with no text) and **too thin**
+   (under 20 characters — a stray keystroke, an accidental paste). Both are
+   refused with an explanation and an explicit N/A escape hatch, and neither
+   enters the log. Anything longer passes: quality is the agent's call.
+
+   Worth recording what this deliberately does *not* buy. A third shape kind
+   accepting prose would match everything, so it would be a rubber stamp
+   wearing the costume of a gate — and it would dilute the reason the spec's 11
+   headings are strict. The floor is a real check because it can fail; the
+   prose kind never could.
+
 **The shape (`ux-handoff-spec`, in `api-server.py`)** has two kinds
 discriminated by structure, not by a self-declared label: `question`
 (a question mark plus a rationale for asking) and `spec` (the spec heading
@@ -592,11 +606,18 @@ design promised, now demonstrated rather than asserted. F17's and F19's suites
 were updated to assert the new truth — and F17's registry count is now derived
 from the vault rather than hardcoded, so it will not drift again.
 
-**Two suites:** `scripts/e2e-verify-f20.js` (63 checks) asserts the runner's
-shape statically; `scripts/e2e-verify-f20-loop.js` (17 checks) drives the
+**Two suites:** `scripts/e2e-verify-f20.js` (72 checks) asserts the runner's
+shape statically; `scripts/e2e-verify-f20-loop.js` (27 checks) drives the
 whole interview against the live backend and proves the property that matters
 most — **a clarifying question never writes to the lens file and leaves status
 untouched, while a spec writes at `ux-ready` with the Genesis seed preserved.**
+It also asserts the re-issued prompt carries the answer log, and that the two
+refused failure modes never enter it. It cleans up after itself, including the
+session sidecar that `DELETE /file` cannot reach.
+
+Both suites were checked for teeth: disabling the `UX_MIN_ANSWER_CHARS` guard
+fails 5 checks in the live suite and 2 in the static one. A suspender nobody
+can trip is not a suspender.
 
 ---
 

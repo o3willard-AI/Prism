@@ -56,7 +56,9 @@ const read = (p) => fs.readFileSync(p, 'utf8');
   // check would call it "unrecognized" and the loop would stall forever. The
   // probe decides: a claimed spec is verified, anything else is an answer.
   check('an answer skips verification and advances the loop',
-        /if \(!looksLikeSpec\) \{ _wfUxAdvance\(\); return; \}/.test(app));
+        /if \(!looksLikeSpec\) \{/.test(app) === false
+        && /answer\.length === 0/.test(app)
+        && /_wfUxAdvance\(\);/.test(app));
   check('a claimed spec is routed through the real shape check',
         /_wfVerifyPasted\(userText, 'ux-handoff-spec'\)/.test(app));
   check('the probe keys on the spec heading, not on a round-trip',
@@ -184,6 +186,31 @@ const read = (p) => fs.readFileSync(p, 'utf8');
   const shapeSections = (api.match(/"\d+\.\s/g) || []).length;
   check('the shape covers at least the 11 process-doc fields',
         shapeSections >= 11, 'shape has ' + shapeSections + ' numbered checks');
+
+  // ── 8. Suspenders on the unverified answer path ─────────────────────────
+  // Answers deliberately skip F2's shape check, so the cheap failure modes
+  // are refused locally instead. Without this, a stray keystroke becomes "a
+  // validated answer" the agent was told to trust.
+  section('Answer-path suspenders');
+  check('a minimum-answer constant is defined',
+        /const UX_MIN_ANSWER_CHARS = \d+/.test(app));
+  const floor = parseInt((app.match(/UX_MIN_ANSWER_CHARS = (\d+)/) || [])[1] || '0', 10);
+  check('the floor is a short sentence, not a word', floor >= 20 && floor <= 40,
+        'floor=' + floor);
+  check('an empty answer is refused', /answer\.length === 0/.test(app));
+  check('a too-thin answer is refused',
+        /answer\.length < UX_MIN_ANSWER_CHARS/.test(app));
+  check('the refusal explains it was not added to the log',
+        /not added to the interview log|was not added to the interview log/.test(app));
+  check('the refusal says why it matters (the agent would trust it)',
+        /validated answer/.test(app));
+  check('the refusal offers the N/A escape hatch',
+        /explicit N\/A/.test(app));
+  check('a refused answer does NOT advance the interview',
+        /_wfUxAdvance\(\);\n\}/.test(app)
+        && app.indexOf('answer.length < UX_MIN_ANSWER_CHARS')
+              < app.lastIndexOf('_wfUxAdvance();'));
+  check('a real answer still passes through', /_wfUxAdvance\(\);/.test(app));
 
   console.log(`\n${pass}/${pass + fail} checks passed`);
   if (fail) { console.log(`${fail} FAILED`); process.exit(1); }
