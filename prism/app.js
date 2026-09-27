@@ -86,7 +86,7 @@ function toast(msg, isError = false) {
 // ── Navigation ─────────────────────────────────────────────────────────────
 
 const VIEW_TITLES = {
-  dashboard: 'Crafting Table', ingest: 'Ingest Artifact',
+  dashboard: 'Crafting Table',
   knowledge: 'Knowledge Base', workflows: 'Workflows', hypotheses: 'Hypotheses',
   requirements: 'Requirements',
   rationalizations: 'Rationalizations',
@@ -267,7 +267,6 @@ async function renderView(view) {
 
   try {
     if (view === 'dashboard')    await renderDashboard(area);
-    else if (view === 'ingest')  renderIngest(area);
     else if (view === 'knowledge')    await renderKnowledge(area);
     else if (view === 'workflows')    await renderWorkflows(area);
     else if (view === 'hypotheses')       await renderHypotheses(area);
@@ -315,6 +314,39 @@ async function renderDesk(area) {
             <span class="desk-pause-tag">⏸ paused</span>
             <span style="flex:1;font-size:13.5px;font-weight:600">${escHtml(label)}</span>
             <button class="desk-door" onclick="continueWorkflow('${escHtml(p.path)}','${p.lens}','desk-content')">Resume →</button>
+          </div>`;
+        }).join('')}
+      </div>`;
+  }
+
+  // The staged queue. Until now ingestion/unprocessed/ was write-only: the
+  // Ingest page could fill it and the retired wizard was the only thing that
+  // could read it. With both gone, the desk lists it here — otherwise staging
+  // is a place raw thought goes to be lost.
+  let queuedRows = '';
+  let queued = [];
+  try {
+    const list = await apiGet('/list?path=' + encodeURIComponent('ingestion/unprocessed'));
+    queued = (list || []).filter(f => f.type === 'file' && f.name.endsWith('.md')
+                                     && !f.name.startsWith('_'));
+  } catch (e) { /* queue is local and may not exist yet — not an error */ }
+
+  if (queued.length) {
+    queuedRows = `
+      <div class="card" style="margin-top:20px">
+        <div class="section-header" style="margin-bottom:10px">
+          <h3 style="font-size:14px">In the queue</h3>
+          <span style="font-size:12px;color:var(--text-secondary)">
+            ${queued.length} staged · local only, never synced
+          </span>
+        </div>
+        ${queued.map(f => {
+          const label = f.name.replace('.md','').replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/-/g,' ');
+          return `<div class="desk-continue-row">
+            <span style="flex:1;font-size:13.5px">${escHtml(label)}</span>
+            <button class="btn btn-ghost btn-sm" onclick="_deskLoadQueued('${escHtml(f.path)}')">Load →</button>
+            <button class="btn btn-ghost btn-sm" onclick="_deskDiscardQueued('${escHtml(f.path)}')"
+              title="Delete from the queue">🗑</button>
           </div>`;
         }).join('')}
       </div>`;
@@ -372,9 +404,21 @@ async function renderDesk(area) {
 
         <div class="form-label" style="margin-top:18px;margin-bottom:8px">Route it through a lens:</div>
         <div class="desk-doors" id="desk-doors">${lensDoors}</div>
+
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+          <button class="btn btn-ghost btn-sm" onclick="deskStageOnly()"
+            title="Save to the unprocessed queue without creating a lens — refract it later">
+            📥 Not yet — just hold it in the queue
+          </button>
+          <div style="font-size:11.5px;color:var(--text-secondary);margin-top:5px">
+            Raw thought can arrive faster than you can lens it. Staging keeps it local
+            (<code>ingestion/unprocessed/</code>, never synced) until you are ready.
+          </div>
+        </div>
         <div id="desk-error" style="color:#dc2626;font-size:13px;margin-top:10px"></div>
       </div>
 
+      ${queuedRows}
       ${pausedRows}
     </div>`;
 
@@ -411,6 +455,88 @@ function deskLensDoor(lensKey) {
   // A door is an action: pick the lens, go (one click, no start button).
   _desk.lens = lensKey;
   deskSubmit();
+}
+
+// ── Staged queue ───────────────────────────────────────────────────────────
+// Load a staged artifact back into the desk so it can be lensed, or discard it.
+// These live on the desk because the Ingest page (the only other surface) is
+// retired, and the wizard that used to read the queue is gone — without these
+// the queue is write-only and staged thought is lost.
+
+// Unwrap a staged ingest document back to the raw thought. A queued artifact
+// is a full ingest file:
+//
+//     # title
+//     **Type:** … **Date:** … **Private:** … **Provenance:** … **Status:** …
+//     ---            <- opening divider, after the provenance header
+//     <raw thought>
+//     ---            <- closing divider
+//     ## Observations   (empty annotation stubs)
+//
+// The raw thought is BETWEEN the two dividers, so take the text after the
+// FIRST divider and stop at the next one. Feeding the whole wrapper back into
+// the desk would double-wrap it on re-submit. This mirrors what the backend
+// does when scaffolding a lens from an artifact.
+function _rawIngestBody(content) {
+  const lines = String(content || '').split('\n');
+  const open = lines.findIndex(l => l.trim() === '---');
+  if (open < 0) return String(content || '');   // not a wrapper — take it as-is
+  const close = lines.findIndex((l, i) => i > open && l.trim() === '---');
+  const body = close < 0 ? lines.slice(open + 1) : lines.slice(open + 1, close);
+  return body.join('\n').trim();
+}
+
+async function _deskLoadQueued(path) {
+  try {
+    const { content } = await apiGet('/file?path=' + encodeURIComponent(path));
+    const raw = _rawIngestBody(content);
+    const name = path.split('/').pop().replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/\.md$/,'');
+    _desk = { content: raw, type: 'unordered', lens: null, fileLoaded: name };
+    document.getElementById('topbar-title').textContent = 'Crafting Table';
+    await renderDesk(document.getElementById('content-area'));
+    toast('📥 Loaded — pick a lens to refract it, or stage it again');
+  } catch (e) {
+    toast('Could not load that artifact: ' + e.message, true);
+  }
+}
+
+async function _deskDiscardQueued(path) {
+  const name = path.split('/').pop();
+  if (!confirm(`Discard "${name.replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/\.md$/,'')}" from the queue?\n\nThis cannot be undone.`)) return;
+  try {
+    await apiFetch('/file?path=' + encodeURIComponent(path), { method: 'DELETE' });
+    // A private artifact was never mirrored into source/, so nothing else to
+    // clean up. A public one has an immutable source copy that DELETE cannot
+    // reach — say so rather than pretending the delete was total.
+    toast('🗑 Discarded from the queue' + (name.includes('-private') ? '' : ' (source copy retained)'));
+    await renderDesk(document.getElementById('content-area'));
+  } catch (e) {
+    toast('Could not discard: ' + e.message, true);
+  }
+}
+
+async function deskStageOnly() {
+  // Ingest without processing. The Ingest page used to be the only way to
+  // stop here; it is retired, so the desk owns this. Useful when raw thought
+  // arrives faster than it can be lensed — hold it, refract it later.
+  const errEl = document.getElementById('desk-error');
+  const content = _desk.content.trim();
+  errEl.textContent = '';
+  if (!content) { errEl.textContent = 'Add the raw thought first — even staged, it needs to be something.'; return; }
+
+  try {
+    await ingestArtifact({
+      type: _desk.type,
+      title: autoName('seed'),
+      content,
+      is_private: _deskPrivate,
+    });
+  } catch (e) { errEl.textContent = e.message; return; }
+
+  _desk = { content: '', type: 'unordered', lens: null, fileLoaded: null };
+  _deskPrivate = false;
+  toast('📥 Staged in the queue — refract it when you are ready');
+  await renderDesk(document.getElementById('content-area'));
 }
 
 async function deskSubmit() {
@@ -465,24 +591,28 @@ async function deskSubmit() {
 
 function updateBadges(s) {
   // Badges now come straight from GET /lenses (single source of truth).
+  //
+  // A badge count of 0 is a real count, not "no data". `b.x || '–'` rendered a
+  // dash for every empty lens, so a fresh install showed three dashes where it
+  // should have shown three zeros. Only null/undefined/'' mean "not loaded".
+  const n = (v) => (v === null || v === undefined || v === '') ? '–' : String(v);
   const b = s.badges || {};
-  document.getElementById('badge-hyp').textContent = b.hypotheses || '–';
-  document.getElementById('badge-req').textContent = b.requirements || '–';
-  document.getElementById('badge-rat').textContent = b.rationalizations || '–';
+  document.getElementById('badge-hyp').textContent = n(b.hypotheses);
+  document.getElementById('badge-req').textContent = n(b.requirements);
+  document.getElementById('badge-rat').textContent = n(b.rationalizations);
 }
 
 // ── F9: one ingest path, one private decision ──────────────────────────────
 // Three surfaces (Refraction Desk, Ingest page, wizard quick-ingest) each
 // used to build their own /ingest payload — and had already silently
 // diverged: two hardcoded is_private:false, dropping the privacy boundary
-// the user never saw. Now a single builder is the only way an artifact
-// enters the vault, and every surface passes an explicit is_private it
-// owns. There is no default — the flag must be named.
+// the user never saw. F17 retired two of the three; the survivor is the
+// Crafting Table, and it still has exactly one builder.
 //
-// Per-surface private state; each owns a visible control:
-let _deskPrivate = false;   // Refraction Desk (checkbox)
-let _qiPrivate   = false;   // wizard quick-ingest (checkbox)
-// The Ingest page keeps its existing _isPrivate toggle (defined below).
+// Per-surface private state; each owns a visible control.
+// F17 retired both the wizard and the standalone Ingest page, so the Crafting
+// Table is the only ingest surface left and this is its flag.
+let _deskPrivate = false;
 
 async function ingestArtifact({ type, title, content, is_private }) {
   if (!content || !content.trim()) throw new Error('Content cannot be empty.');
@@ -501,165 +631,6 @@ function readTextFile(file, onLoad) {
   reader.onerror = () => toast('Could not read file.', true);
   reader.readAsText(file);
 }
-
-// ── Ingest ─────────────────────────────────────────────────────────────────
-
-let _isPrivate = false;
-
-function renderIngest(area) {
-  _isPrivate = false;
-  area.innerHTML = `
-    <div style="max-width:680px">
-      <div class="card">
-        <p style="font-size:14px;color:var(--text-secondary);margin-bottom:20px">
-          Drop a file or paste raw text. Every artifact lands in
-          <code>ingestion/unprocessed/</code> (local only, never synced) until
-          you promote it. Private artifacts are additionally excluded from all
-          repo pushes.
-        </p>
-
-        <!-- Drag and drop zone -->
-        <div class="drop-zone" id="drop-zone">
-          <input type="file" id="file-input" accept=".md,.txt,.csv,.json,.rtf"
-            onchange="handleFileSelect(this.files)">
-          <div class="dz-icon">📂</div>
-          <div class="dz-label">Drop a file here, or click to browse</div>
-          <div class="dz-sub">.md · .txt · .csv · .json — text files only</div>
-          <div class="dz-loaded" id="dz-loaded" style="display:none"></div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Artifact type</label>
-          <select class="form-select" id="ing-type">
-            <option value="formatted">📄 Formatted or ordered text</option>
-            <option value="unordered">📝 Unordered text</option>
-            <option value="media">🎬 Media (audio / video / image)</option>
-            <option value="application">📦 Application specific (ppt, svg, etc.)</option>
-            <option value="code">💻 Code</option>
-            <option value="dictation">🎤 Dictation</option>
-          </select>
-          <div id="ing-type-hint" style="font-size:11.5px;color:var(--text-secondary);margin-top:5px"></div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Title / short description</label>
-          <div style="display:flex;gap:8px;align-items:stretch">
-            <input class="form-input" id="ing-title" type="text"
-              style="flex:1"
-              placeholder="e.g. Acme Corp discovery call — ops lead">
-            <button class="btn btn-ghost btn-sm" type="button"
-              style="white-space:nowrap;flex-shrink:0"
-              onclick="document.getElementById('ing-title').value=autoName('Ingest');document.getElementById('ing-title').focus()">
-              🎲 Auto Name
-            </button>
-          </div>
-          <div class="form-hint">Becomes the filename. Be specific — you'll search for this later.</div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Content</label>
-          <textarea class="form-textarea" id="ing-content"
-            placeholder="Paste raw transcript, notes, or article text here… (or drop a file above)"></textarea>
-        </div>
-
-        <!-- Private toggle -->
-        <div class="toggle-row" id="private-toggle" onclick="togglePrivate()">
-          <span style="font-size:18px">🔒</span>
-          <div class="toggle-label">
-            <strong>Private</strong>
-            <span id="private-desc">Off — file will be included in repo syncs</span>
-          </div>
-          <div class="toggle-switch" id="toggle-knob"></div>
-        </div>
-
-        <div style="display:flex;gap:10px;align-items:center">
-          <button class="btn btn-primary" onclick="submitIngest()">📥 Ingest artifact</button>
-          <span id="ing-status" style="font-size:13px;color:var(--text-secondary)"></span>
-        </div>
-      </div>
-    </div>`;
-
-  // Wire up drag-and-drop events
-  const zone = document.getElementById('drop-zone');
-  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
-  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
-  zone.addEventListener('drop', e => {
-    e.preventDefault();
-    zone.classList.remove('drag-over');
-    handleFileSelect(e.dataTransfer.files);
-  });
-
-  // F10: auto-classify the legacy ingest form too — same rules, same
-  // sticky override, one shared backend.
-  _classifySurfaces.ing = {
-    selectId: 'ing-type', contentId: 'ing-content', hintId: 'ing-type-hint',
-    filename: '', seq: 0, touched: false, timer: null, lastKey: null,
-  };
-  _classifyWire(_classifySurfaces.ing);
-}
-
-function togglePrivate() {
-  _isPrivate = !_isPrivate;
-  const row  = document.getElementById('private-toggle');
-  const desc = document.getElementById('private-desc');
-  if (_isPrivate) {
-    row.classList.add('private-on');
-    desc.textContent = 'On — filename gets -private suffix, excluded from all repo syncs';
-  } else {
-    row.classList.remove('private-on');
-    desc.textContent = 'Off — file will be included in repo syncs';
-  }
-}
-
-function handleFileSelect(files) {
-  if (!files || files.length === 0) return;
-  readTextFile(files[0], (content, file) => {
-    document.getElementById('ing-content').value = content;
-
-    // Auto-populate title from filename (strip extension, humanize)
-    const titleEl = document.getElementById('ing-title');
-    if (!titleEl.value) {
-      titleEl.value = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
-    }
-
-    // F10: type comes from the classifier (filename + content), replacing
-    // the old hardcoded extension/name-hint list. Sticky human override.
-    const surface = _classifySurfaces.ing;
-    if (surface) { surface.filename = file.name; _classifyTrigger(surface); }
-
-    // Show loaded indicator
-    const loaded = document.getElementById('dz-loaded');
-    loaded.textContent = `✅ ${file.name} loaded (${(file.size/1024).toFixed(1)} KB)`;
-    loaded.style.display = 'block';
-  });
-}
-
-async function submitIngest() {
-  const type      = document.getElementById('ing-type').value;
-  const title     = document.getElementById('ing-title').value.trim();
-  const content   = document.getElementById('ing-content').value.trim();
-  const status    = document.getElementById('ing-status');
-
-  if (!title)   { toast('Please add a title.', true); return; }
-  if (!content) { toast('Content cannot be empty.', true); return; }
-
-  status.textContent = 'Saving…';
-  try {
-    const r = await ingestArtifact({ type, title, content, is_private: _isPrivate });
-    status.textContent = '';
-    document.getElementById('ing-title').value   = '';
-    document.getElementById('ing-content').value = '';
-    document.getElementById('dz-loaded').style.display = 'none';
-    if (_isPrivate) { togglePrivate(); } // reset toggle
-
-    const privLabel = r.private ? ' 🔒 (private — repo-excluded)' : '';
-    toast(`✅ Saved to ${r.path}${privLabel}`);
-  } catch (e) {
-    status.textContent = '';
-    toast(e.message, true);
-  }
-}
-
 // ── Knowledge ──────────────────────────────────────────────────────────────
 
 async function renderKnowledge(area) {
@@ -762,6 +733,7 @@ async function openWorkflowFile(relPath) {
         <h3 style="margin:0 0 6px">${meta['name']}</h3>
         ${meta['description'] ? `<p style="margin:0 0 8px;color:var(--text-secondary)">${meta['description']}</p>` : ''}
         <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:12px">
+          ${_wfRunnerBadge(relPath)}
           ${meta['for lenses'] ? `<span class="badge">🔍 ${meta['for lenses']}</span>` : ''}
           ${meta['type'] ? `<span class="badge">⚡ ${meta['type']}</span>` : ''}
         </div>
@@ -776,6 +748,43 @@ async function openWorkflowFile(relPath) {
   } catch (e) {
     panel.innerHTML = `<div class="card" style="color:#dc2626">⚠️ ${e.message}</div>`;
   }
+}
+
+// ── Runner status (D) ──────────────────────────────────────────────────────
+// A workflow definition is not a runnable workflow. Since the Lens Wizard's
+// step-3 picker is retired, the Workflows view is the only place a reader
+// learns which definitions actually have a runner in app.js — so it says so
+// explicitly. A definition without a runner is labelled, not silently listed
+// as if it worked (GN-005: declaring the missing focal point).
+//
+// This is the same door-state discipline F8 applied to the integration
+// option: a workflow becomes runnable when its runner is written, and the
+// badge clears by itself because both sides read _WF_RUNNERS.
+//
+// NOTE on the title text: it is built as a single-line string deliberately.
+// Splitting it across source lines with a trailing `+` puts a literal newline
+// INSIDE the HTML attribute, and the browser then ends the attribute value at
+// the line break — so the tooltip silently truncates. Only a rendered DOM
+// shows this; the source reads fine. (F19 caught it.)
+
+const _WF_NOT_RUNNABLE_TITLE =
+  'Defined in the vault, but app.js has no runner for it yet — the Crafting ' +
+  'Table cannot launch it. Writing the runner makes it runnable.';
+
+function _wfIdFromPath(relPath) {
+  // workflows/<id>/README.md  ->  <id>
+  const m = String(relPath || '').match(/^workflows\/([^/]+)\//);
+  return m ? m[1] : '';
+}
+
+function _wfRunnerBadge(relPath) {
+  const id = _wfIdFromPath(relPath);
+  if (!id) return '';
+  if (_wfHasRunner(id)) {
+    return `<span class="badge ok" title="app.js has a runner for this workflow">▶ runnable</span>`;
+  }
+  return `<span class="badge warn" title="${escHtml(_WF_NOT_RUNNABLE_TITLE)}">` +
+    `⚠️ defined, not yet runnable</span>`;
 }
 
 function renderTreeNode(container, nodes, contentId) {
@@ -1053,10 +1062,25 @@ function autoName(seedWord) {
   return `${guid5}-${seedWord}-${day}${month}${now.getFullYear()}`;
 }
 
+// ── The one door ───────────────────────────────────────────────────────────
+// Creating a lens happens at the Crafting Table, nowhere else. These views are
+// for working on lenses that already exist — opening one, continuing its
+// workflow, emitting or deleting it. The wizard that used to sit behind the
+// "＋ New …" buttons is retired; the desk is the single entry point.
+//
+// The pointer is a link rather than a second creation path on purpose: a lens
+// view must still hand the human a next action (GN-006), and "go to the door"
+// is one, but it does not re-scatter entry points.
+
+function _craftingTablePointer(noun) {
+  return `<button class="btn btn-primary" style="margin-top:16px" onclick="gotoView('dashboard')">
+    ◈ Go to the Crafting Table to add a ${escHtml(noun.toLowerCase())}</button>`;
+}
+
 // ── Hypotheses ─────────────────────────────────────────────────────────────
 
 async function renderHypotheses(area) {
-  setTopbarAction(`<button class="btn btn-primary btn-sm" onclick="newHypothesis()">＋ New hypothesis</button>`);
+  setTopbarAction(`<button class="btn btn-ghost btn-sm" onclick="gotoView('dashboard')">◈ Crafting Table</button>`);
 
   const tree = await apiGet('/tree');
   const hypNode = tree.find(n => n.name === 'hypotheses');
@@ -1066,8 +1090,8 @@ async function renderHypotheses(area) {
     area.innerHTML = `
       <div class="empty-state">
         <div class="es-icon">🔬</div>
-        <p>No hypotheses yet. Create one to start tracking your testable beliefs.</p>
-        <button class="btn btn-primary" style="margin-top:16px" onclick="newHypothesis()">＋ New hypothesis</button>
+        <p>No hypotheses yet. Bring a raw thought to the Crafting Table and it becomes one.</p>
+        ${_craftingTablePointer('hypothesis')}
       </div>`;
     return;
   }
@@ -1123,7 +1147,7 @@ async function openHypInPanel(path) {
 // ── Requirements ───────────────────────────────────────────────────────────
 
 async function renderRequirements(area) {
-  setTopbarAction(`<button class="btn btn-primary btn-sm" onclick="newRequirement()">＋ New requirement</button>`);
+  setTopbarAction(`<button class="btn btn-ghost btn-sm" onclick="gotoView('dashboard')">◈ Crafting Table</button>`);
 
   const tree = await apiGet('/tree');
   const node = tree.find(n => n.name === 'requirements');
@@ -1133,8 +1157,8 @@ async function renderRequirements(area) {
     area.innerHTML = `
       <div class="empty-state">
         <div class="es-icon">📋</div>
-        <p>No requirements yet. Transform an ingested artifact into a structured requirement.</p>
-        <button class="btn btn-primary" style="margin-top:16px" onclick="newRequirement()">＋ New requirement</button>
+        <p>No requirements yet. Bring a raw thought to the Crafting Table and it becomes one.</p>
+        ${_craftingTablePointer('requirement')}
       </div>`;
     return;
   }
@@ -1214,9 +1238,16 @@ async function openReqInPanel(path) {
   }
 }
 
-// ── Lens Wizard (generic) ─────────────────────────────────────────────────
-// Shared wizard for Hypotheses (Epiphany),
-// Requirements (Genesis) and Rationalizations (Gibberish).
+// ── Lens configuration ─────────────────────────────────────────────────────
+// Per-lens vocabulary and the default workflow each lens routes through.
+// This was the header of the (now retired) Lens Wizard; the config itself is
+// still the single source of truth for noun, seed word, creation endpoint and
+// default workflow — the Crafting Table and every workflow runner read it.
+//
+// Creating a lens happens at the Crafting Table only. The wizard's step 3
+// (choose a non-default workflow) is gone with it; see _wfRunnerFor() and the
+// runner-status badge in the Workflows view for how a workflow without a
+// runner is surfaced.
 
 const LENS_CONFIGS = {
   hypotheses:      { noun: 'Hypothesis',      seedWord: 'Epiphany',  endpoint: '/hypotheses/from-epiphany',         navKey: 'hypotheses',      contentId: 'hyp-content', placeholder: 'e.g. Users churn because onboarding is too long',   defaultWorkflow: 'hypotheses-default' },
@@ -1224,611 +1255,10 @@ const LENS_CONFIGS = {
   rationalizations:{ noun: 'Rationalization', seedWord: 'Gibberish', endpoint: '/rationalizations/from-gibberish',  navKey: 'rationalizations',contentId: 'rat-content', placeholder: 'e.g. Why we did not ship feature X',             defaultWorkflow: 'rationalizations-default' },
 };
 
-let _wiz = { step: 1, title: '', artifact: null, lens: 'requirements', subAssets: [], selectedWorkflow: null, workflows: [] };
-
-function _startWizard(lensKey) {
-  const cfg = LENS_CONFIGS[lensKey];
-  _wiz = { step: 1, title: '', artifact: null, lens: lensKey, subAssets: [], selectedWorkflow: null, workflows: [] };
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  const navEl = document.querySelector(`[data-view="${cfg.navKey}"]`);
-  if (navEl) navEl.classList.add('active');
-  document.getElementById('topbar-title').textContent = `New ${cfg.noun}`;
-  setTopbarAction('');
-  renderWizardStep(document.getElementById('content-area'));
-}
-
-function newHypothesis()      { _startWizard('hypotheses'); }
-function newRequirement()     { _startWizard('requirements'); }
-function newRationalization() { _startWizard('rationalizations'); }
-
-function wizProgressBar() {
-  const cfg   = LENS_CONFIGS[_wiz.lens];
-  const steps = [{ n:1, label:'Name' }, { n:2, label: cfg.seedWord }, { n:3, label:'Launch' }];
-  return `<div style="display:flex;align-items:center;margin-bottom:28px;max-width:480px">
-    ${steps.map((s, i) => `
-      <div style="display:flex;align-items:center;flex:1;min-width:0">
-        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-          <div style="width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-            font-size:12px;font-weight:700;flex-shrink:0;
-            background:${_wiz.step > s.n ? 'var(--status-validated)' : _wiz.step === s.n ? 'var(--accent)' : '#e5e7eb'};
-            color:${_wiz.step >= s.n ? '#fff' : 'var(--text-secondary)'}">
-            ${_wiz.step > s.n ? '✓' : s.n}
-          </div>
-          <span style="font-size:13px;font-weight:${_wiz.step === s.n ? '700':'500'};
-            color:${_wiz.step === s.n ? 'var(--text-primary)':'var(--text-secondary)'}">
-            ${s.label}
-          </span>
-        </div>
-        ${i < steps.length-1 ? `<div style="flex:1;height:2px;margin:0 12px;
-          background:${_wiz.step > s.n ? 'var(--status-validated)':'#e5e7eb'}"></div>` : ''}
-      </div>`).join('')}
-  </div>`;
-}
-
-function renderWizardStep(area) {
-  if      (_wiz.step === 1) renderWizStep1(area);
-  else if (_wiz.step === 2) renderWizStep2(area);
-  else if (_wiz.step === 3) renderWizStep3(area);
-}
-
-function renderWizStep1(area) {
-  const cfg = LENS_CONFIGS[_wiz.lens];
-  area.innerHTML = `
-    <div style="max-width:560px">
-      ${wizProgressBar()}
-      <div class="card">
-        <h3 style="font-size:16px;font-weight:700;margin-bottom:6px">Name this ${cfg.noun.toLowerCase()}</h3>
-        <p style="font-size:13.5px;color:var(--text-secondary);margin-bottom:20px">
-          Give it a clear, concise title. This becomes the filename and is referenced throughout Prism.
-        </p>
-        <div class="form-group">
-          <label class="form-label">${cfg.noun} title</label>
-          <div style="display:flex;gap:8px;align-items:stretch">
-            <input class="form-input" id="wiz-title" type="text"
-              style="flex:1"
-              value="${escHtml(_wiz.title)}"
-              placeholder="${cfg.placeholder}"
-              onkeydown="if(event.key==='Enter') wizStep1Next()">
-            <button class="btn btn-ghost btn-sm" type="button"
-              style="white-space:nowrap;flex-shrink:0"
-              onclick="document.getElementById('wiz-title').value=autoName('${cfg.seedWord}');document.getElementById('wiz-title').focus()">
-              🎲 Auto Name
-            </button>
-          </div>
-        </div>
-        <div style="display:flex;gap:10px">
-          <button class="btn btn-ghost" onclick="nav(null,'${cfg.navKey}')">Cancel</button>
-          <button class="btn btn-primary" onclick="wizStep1Next()">Next: Choose ${cfg.seedWord} →</button>
-        </div>
-      </div>
-    </div>`;
-  document.getElementById('wiz-title').focus();
-}
-
-function wizStep1Next() {
-  const title = document.getElementById('wiz-title').value.trim();
-  if (!title) { toast('Please enter a title.', true); return; }
-  _wiz.title = title;
-  _wiz.step  = 2;
-  renderWizardStep(document.getElementById('content-area'));
-}
-
-async function renderWizStep2(area) {
-  const cfg = LENS_CONFIGS[_wiz.lens];
-  let unprocessed = [];
-  try {
-    const data = await apiGet('/list?path=ingestion/unprocessed');
-    unprocessed = data.filter(f => f.type === 'file');
-  } catch(e) {}
-
-  const sel = _wiz.artifact?.path || '';
-
-  area.innerHTML = `
-    <div style="max-width:760px">
-      ${wizProgressBar()}
-      <div class="card" style="margin-bottom:16px;padding:16px 20px">
-        <div style="font-size:16px;font-weight:700;margin-bottom:4px">Choose the ${cfg.seedWord}</div>
-        <div style="font-size:13.5px;color:var(--text-secondary)">
-          Select an artifact already in the unprocessed queue, or ingest one now.
-          The ${cfg.seedWord} seeds this ${cfg.noun.toLowerCase()} with raw source material.
-        </div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
-
-        <div class="card card-sm">
-          <div style="font-size:13px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px">
-            📂 Unprocessed queue
-            <span style="font-size:11px;font-weight:500;color:var(--text-secondary)">${unprocessed.length} item${unprocessed.length!==1?'s':''}</span>
-          </div>
-          ${unprocessed.length === 0
-            ? `<div style="text-align:center;padding:24px 12px;color:var(--text-secondary);font-size:13px;line-height:1.5">
-                Queue is empty.<br>Ingest an artifact using the panel →
-               </div>`
-            : `<div style="display:flex;flex-direction:column;gap:3px;max-height:300px;overflow-y:auto">
-                ${unprocessed.map(f => {
-                  const isPriv  = f.name.includes('-private');
-                  const display = f.name.replace('.md','').replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/-/g,' ');
-                  const isSelected = sel === f.path;
-                  return `<div class="file-item" data-path="${f.path}"
-                    onclick="wiz2SelectArtifact('${f.path}')"
-                    style="${isSelected ? 'background:#eff6ff;border:1px solid var(--accent);border-radius:7px' : ''}">
-                    <span class="fi-icon">${isPriv?'🔒':'📄'}</span>
-                    <span class="fi-name" style="font-size:12.5px">${display}</span>
-                  </div>`;
-                }).join('')}
-               </div>`}
-        </div>
-
-        <div class="card card-sm">
-          <div style="font-size:13px;font-weight:700;margin-bottom:10px">➕ Ingest new artifact</div>
-          <div class="form-group" style="margin-bottom:10px">
-            <select class="form-select" id="qi-type" style="font-size:12.5px">
-              <option value="formatted">📄 Formatted or ordered text</option>
-              <option value="unordered">📝 Unordered text</option>
-              <option value="media">🎬 Media</option>
-              <option value="application">📦 Application specific</option>
-              <option value="code">💻 Code</option>
-              <option value="dictation">🎤 Dictation</option>
-            </select>
-            <div id="qi-type-hint" style="font-size:11px;color:var(--text-secondary);margin-top:4px"></div>
-          </div>
-          <div class="form-group" style="margin-bottom:10px">
-            <input class="form-input" id="qi-title" type="text"
-              placeholder="Short title" style="font-size:12.5px">
-          </div>
-          <div class="drop-zone" id="qi-drop-zone" style="padding:14px;margin-bottom:8px">
-            <input type="file" id="qi-file-input" accept=".md,.txt,.csv,.json,.rtf"
-              onchange="handleQIFileSelect(this.files)">
-            <div class="dz-icon" style="font-size:20px">📂</div>
-            <div class="dz-label" style="font-size:12px">Drop file or click to browse</div>
-            <div class="dz-loaded" id="qi-dz-loaded" style="display:none;font-size:11px"></div>
-          </div>
-          <textarea class="form-textarea" id="qi-content"
-            placeholder="Or paste content here…"
-            style="min-height:72px;font-size:12.5px;margin-bottom:8px"></textarea>
-          <label style="display:flex;align-items:center;gap:7px;margin-bottom:8px;cursor:pointer;font-size:12px;color:var(--text-secondary);user-select:none">
-            <input type="checkbox" id="qi-private" onchange="_qiPrivate = this.checked"
-              style="width:auto;accent-color:#f59e0b">
-            🔒 Private — exclude from repo syncs
-          </label>
-          <button class="btn btn-ghost btn-sm" style="width:100%" onclick="wizQuickIngest()">
-            📥 Ingest &amp; auto-select
-          </button>
-          <div id="qi-status" style="font-size:12px;color:var(--text-secondary);margin-top:6px;text-align:center"></div>
-        </div>
-      </div>
-
-      <div id="genesis-preview" style="${sel ? '' : 'display:none'}">
-        <div class="card card-sm" style="border-color:var(--accent);background:#f8f9ff;margin-bottom:16px">
-          <div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:8px">✓ ${cfg.seedWord} selected</div>
-          <div id="genesis-preview-content" style="font-size:12.5px;color:var(--text-secondary)"></div>
-        </div>
-      </div>
-
-      <div style="display:flex;gap:10px;align-items:center">
-        <button class="btn btn-ghost" onclick="wizBack()">← Back</button>
-        <button class="btn btn-primary" id="interpret-btn"
-          ${sel ? '' : 'disabled style="opacity:0.5;cursor:not-allowed"'}
-          onclick="wizStep2Next()">Next: Assemble →</button>
-        <span id="wiz-error" style="font-size:13px;color:#dc2626;flex:1"></span>
-      </div>
-    </div>`;
-
-  const zone = document.getElementById('qi-drop-zone');
-  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
-  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
-  zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('drag-over'); handleQIFileSelect(e.dataTransfer.files); });
-
-  // F10: quick-ingest gets the same classifier (this was the divergent
-  // third copy of ingest — now all three share one backend rule).
-  _classifySurfaces.qi = {
-    selectId: 'qi-type', contentId: 'qi-content', hintId: 'qi-type-hint',
-    filename: '', seq: 0, touched: false, timer: null, lastKey: null,
-  };
-  _classifyWire(_classifySurfaces.qi);
-
-  if (sel) updateGenesisPreview(sel);
-}
-
-async function wiz2SelectArtifact(path) {
-  _wiz.artifact = { path };
-  document.querySelectorAll('[data-path]').forEach(el => {
-    const isThis = el.dataset.path === path;
-    el.style.background    = isThis ? '#eff6ff' : '';
-    el.style.border        = isThis ? '1px solid var(--accent)' : '';
-    el.style.borderRadius  = isThis ? '7px' : '';
-  });
-  const btn = document.getElementById('interpret-btn');
-  if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; }
-  document.getElementById('genesis-preview').style.display = 'block';
-  await updateGenesisPreview(path);
-}
-
-async function updateGenesisPreview(path) {
-  const el = document.getElementById('genesis-preview-content');
-  if (!el) return;
-  try {
-    const { content } = await apiGet(`/file?path=${encodeURIComponent(path)}`);
-    _wiz.artifact = { path, content };
-    const meta    = parseMarkdownMeta(content);
-    const preview = content.split('\n').slice(0, 10).join('\n');
-    el.innerHTML = `
-      <strong>${path.split('/').pop()}</strong><br>
-      Type: <span class="badge-status badge-medium">${meta.type||'?'}</span>
-      ${meta.private==='yes' ? '<span class="badge-status badge-yellow" style="margin-left:4px">🔒 private</span>' : ''}
-      <pre style="margin-top:8px;background:#f3f4f6;padding:8px;border-radius:6px;font-size:11px;
-        max-height:80px;overflow:hidden;white-space:pre-wrap">${escHtml(preview)}</pre>`;
-  } catch(e) { el.textContent = 'Could not load preview.'; }
-}
-
-function handleQIFileSelect(files) {
-  if (!files?.length) return;
-  readTextFile(files[0], (content, file) => {
-    document.getElementById('qi-content').value = content;
-    if (!document.getElementById('qi-title').value)
-      document.getElementById('qi-title').value = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
-    // F10: classify via the shared backend instead of a local ext list
-    const surface = _classifySurfaces.qi;
-    if (surface) { surface.filename = file.name; _classifyTrigger(surface); }
-    const loaded = document.getElementById('qi-dz-loaded');
-    loaded.textContent = `✅ ${file.name}`;
-    loaded.style.display = 'block';
-  });
-}
-
-async function wizQuickIngest() {
-  const type    = document.getElementById('qi-type').value;
-  const title   = document.getElementById('qi-title').value.trim();
-  const content = document.getElementById('qi-content').value.trim();
-  const statusEl = document.getElementById('qi-status');
-  if (!title)   { toast('Add a title for the artifact.', true); return; }
-  if (!content) { toast('Content cannot be empty.', true); return; }
-  statusEl.textContent = 'Ingesting…';
-  try {
-    // F9: same shared path, same explicit private flag (previously
-    // hardcoded false — the privacy boundary silently did not exist here).
-    const r = await ingestArtifact({ type, title, content, is_private: _qiPrivate });
-    statusEl.textContent = '';
-    _wiz.artifact = { path: r.path };
-    const privLabel = r.private ? ' 🔒 private' : '';
-    toast('✅ Ingested — auto-selected' + privLabel);
-    renderWizardStep(document.getElementById('content-area'));
-  } catch(e) {
-    statusEl.textContent = '';
-    toast(e.message, true);
-  }
-}
-
-async function wizInterpret() {
-  const cfg = LENS_CONFIGS[_wiz.lens];
-  if (!_wiz.artifact?.path) { toast(`Select a ${cfg.seedWord} artifact first.`, true); return; }
-  const btn   = document.getElementById('interpret-btn');
-  const errEl = document.getElementById('wiz-error');
-  btn.textContent = 'Interpreting…';
-  btn.disabled    = true;
-  errEl.textContent = '';
-  try {
-    const r = await apiPost(cfg.endpoint, {
-      title: _wiz.title,
-      artifact_path: _wiz.artifact.path
-    });
-    if (!r.ok && r.unsupported) {
-      errEl.textContent = r.message;
-      btn.textContent   = `Interpret ${cfg.seedWord} →`;
-      btn.disabled      = false;
-      return;
-    }
-    toast(`✅ ${cfg.noun} created from ${cfg.seedWord}`);
-    const lensKey = _wiz.lens;
-    const cid     = cfg.contentId;
-    const fpath   = r.path;
-    _wiz = { step: 1, title: '', artifact: null, lens: lensKey };
-    await nav(null, lensKey);
-    setTimeout(async () => {
-      const el = document.getElementById(cid);
-      if (el) { await openFile(fpath, cid); el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
-    }, 300);
-  } catch(e) {
-    errEl.textContent = e.message;
-    btn.textContent   = `Interpret ${cfg.seedWord} →`;
-    btn.disabled      = false;
-  }
-}
-
-function wizStep2Next() {
-  const cfg = LENS_CONFIGS[_wiz.lens];
-  if (!_wiz.artifact?.path) { toast(`Select a ${cfg.seedWord} artifact first.`, true); return; }
-  _wiz.step = 3;
-  renderWizardStep(document.getElementById('content-area'));
-}
-
-async function renderWizStep3(area) {
-  const cfg = LENS_CONFIGS[_wiz.lens];
-  area.innerHTML = '<div class="loading-block"><div class="spinner"></div></div>';
-
-  // Fetch unprocessed queue and workflow library in parallel
-  let unprocessed = [], workflows = [];
-  try {
-    const [upData, wfData] = await Promise.all([
-      apiGet('/list?path=ingestion/unprocessed'),
-      apiGet('/workflows'),
-    ]);
-    unprocessed = upData.filter(f => f.type === 'file' && f.path !== _wiz.artifact?.path);
-    workflows   = wfData;
-    _wiz.workflows = workflows;
-  } catch(e) {}
-
-  // Auto-select the lens default workflow if nothing chosen yet
-  if (!_wiz.selectedWorkflow && cfg.defaultWorkflow) {
-    _wiz.selectedWorkflow = workflows.find(w => w.id === cfg.defaultWorkflow) || null;
-  }
-
-  _wiz3Render(area, unprocessed);
-}
-
-function _wiz3Render(area, unprocessed) {
-  const cfg = LENS_CONFIGS[_wiz.lens];
-  const sel = _wiz.selectedWorkflow;
-  const artifact = _wiz.artifact;
-
-  // Sub-asset chips
-  const subChips = _wiz.subAssets.length === 0
-    ? `<span style="font-size:12px;color:var(--text-secondary);font-style:italic">None added — all context comes from the ${cfg.seedWord}</span>`
-    : _wiz.subAssets.map((a, i) => `
-        <span style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;
-          background:var(--bg-tertiary);border-radius:20px;font-size:12px;color:var(--text-secondary)">
-          📎 ${escHtml(a.path.split('/').pop())}
-          <span style="cursor:pointer;opacity:0.7;font-size:14px;line-height:1"
-            onclick="wiz3RemoveSubAsset(${i})">×</span>
-        </span>`).join('');
-
-  // Unprocessed picker rows (exclude already-picked items)
-  const availableForPicker = (unprocessed || []).filter(
-    f => !_wiz.subAssets.some(a => a.path === f.path)
-  );
-  const pickerRows = availableForPicker.length === 0
-    ? `<div style="font-size:12px;color:var(--text-secondary);padding:8px;font-style:italic">
-         ${(unprocessed||[]).length === 0 ? 'Unprocessed queue is empty.' : 'All queue items already added.'}
-       </div>`
-    : availableForPicker.map((f, i) => `
-        <div class="file-item" style="cursor:pointer"
-          onclick="wiz3AddSubAsset('${f.path}')">
-          <span class="fi-icon">${f.name.includes('-private') ? '🔒' : '📄'}</span>
-          <span class="fi-name" style="font-size:12.5px">
-            ${f.name.replace('.md','').replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/-/g,' ')}
-          </span>
-        </div>`).join('');
-
-  // Workflow card content
-  const wfCard = sel
-    ? `<div style="padding:14px 16px;background:var(--bg-tertiary);border-radius:8px;border:2px solid var(--accent)">
-         <div style="font-size:14px;font-weight:700;color:var(--accent);margin-bottom:4px">⚡ ${escHtml(sel.name)}</div>
-         ${sel.description ? `<div style="font-size:13px;color:var(--text-secondary)">${escHtml(sel.description)}</div>` : ''}
-         <div style="font-size:11px;color:var(--text-secondary);margin-top:6px;font-style:italic">default for ${cfg.noun}s</div>
-       </div>`
-    : `<div style="padding:14px 16px;background:#fffbeb;border-radius:8px;border:1px solid #fde68a;color:#92400e;font-size:13px">
-         ⚠️ No default workflow configured for ${cfg.noun}s yet — select from the library or proceed without one.
-       </div>`;
-
-  // Workflow library rows
-  const wfLibrary = _wiz.workflows.length === 0
-    ? `<div style="font-size:13px;color:var(--text-secondary);padding:10px;font-style:italic">
-         No workflows in library. Add subfolders to <code>vault/workflows/</code>.
-       </div>`
-    : _wiz.workflows.map((w, i) => `
-        <div class="record-row" style="cursor:pointer;
-          ${_wiz.selectedWorkflow?.id === w.id ? 'background:#eff6ff;border:1px solid var(--accent);border-radius:8px;' : ''}"
-          onclick="wiz3SelectWorkflow(${i})">
-          <div>
-            <div class="rr-title" style="font-size:13px">⚡ ${escHtml(w.name)}</div>
-            ${w.description ? `<div class="rr-meta">${escHtml(w.description)}</div>` : ''}
-          </div>
-          ${_wiz.selectedWorkflow?.id === w.id
-            ? `<span style="color:var(--accent);font-size:12px;font-weight:700">✓ selected</span>` : ''}
-        </div>`).join('');
-
-  area.innerHTML = `
-    <div style="max-width:640px">
-      ${wizProgressBar()}
-
-      <!-- Assets -->
-      <div class="card" style="margin-bottom:16px">
-        <div style="font-size:15px;font-weight:700;margin-bottom:14px">🎯 Assemble assets</div>
-
-        <div style="margin-bottom:18px">
-          <div class="form-label" style="margin-bottom:6px">
-            ${cfg.seedWord} <span style="font-weight:400;color:var(--text-secondary)">(primary seed — locked)</span>
-          </div>
-          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;
-            background:var(--bg-tertiary);border-radius:8px;border:1px solid var(--border)">
-            <span style="font-size:18px">📄</span>
-            <div style="flex:1;min-width:0">
-              <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-                ${escHtml(artifact.path.split('/').pop())}
-              </div>
-              ${artifact.content ? (() => {
-                const m = parseMarkdownMeta(artifact.content);
-                return `<div style="font-size:11px;color:var(--text-secondary);margin-top:1px">type: ${m.type||'unknown'}</div>`;
-              })() : ''}
-            </div>
-            <span style="font-size:11px;color:var(--text-secondary);font-style:italic">primary</span>
-          </div>
-        </div>
-
-        <div>
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-            <div class="form-label" style="margin:0">
-              Sub-assets <span style="font-weight:400;color:var(--text-secondary)">(optional)</span>
-            </div>
-            <button class="btn btn-ghost btn-sm" onclick="wiz3ToggleSubPicker()">＋ Add from queue</button>
-          </div>
-          <div id="wiz3-sub-chips" style="display:flex;flex-wrap:wrap;gap:6px;min-height:24px">
-            ${subChips}
-          </div>
-          <div id="wiz3-sub-picker" style="display:none;background:var(--bg-tertiary);border-radius:8px;
-            border:1px solid var(--border);padding:6px;max-height:180px;overflow-y:auto;margin-top:8px">
-            ${pickerRows}
-          </div>
-        </div>
-      </div>
-
-      <!-- Workflow -->
-      <div class="card" style="margin-bottom:20px">
-        <div style="font-size:15px;font-weight:700;margin-bottom:14px">⚡ Processing workflow</div>
-        <div id="wiz3-wf-card">${wfCard}</div>
-        <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="wiz3ToggleWfPicker()">
-          ⬡ ${sel ? 'Change' : 'Select'} workflow ▾
-        </button>
-        <div id="wiz3-wf-picker" style="display:none;margin-top:10px;display:flex;flex-direction:column;gap:4px">
-          ${wfLibrary}
-        </div>
-      </div>
-
-      <div style="display:flex;gap:10px;align-items:center">
-        <button class="btn btn-ghost" onclick="wizBack()">← Back</button>
-        <button class="btn btn-primary" id="wiz-launch-btn" onclick="wizLaunch()">⬡ Start Lensing →</button>
-        <span id="wiz-launch-error" style="font-size:13px;color:#dc2626;flex:1"></span>
-      </div>
-    </div>`;
-
-  // Fix: wf-picker starts hidden (the inline style above has display:flex overriding display:none)
-  const wfPicker = document.getElementById('wiz3-wf-picker');
-  if (wfPicker) wfPicker.style.display = 'none';
-}
-
-function wiz3ToggleSubPicker() {
-  const el = document.getElementById('wiz3-sub-picker');
-  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
-}
-
-function wiz3AddSubAsset(path) {
-  if (_wiz.subAssets.some(a => a.path === path)) return;
-  _wiz.subAssets.push({ path });
-  // Re-render just the chips section
-  renderWizardStep(document.getElementById('content-area'));
-}
-
-function wiz3RemoveSubAsset(i) {
-  _wiz.subAssets.splice(i, 1);
-  renderWizardStep(document.getElementById('content-area'));
-}
-
-function wiz3ToggleWfPicker() {
-  const el = document.getElementById('wiz3-wf-picker');
-  if (el) el.style.display = el.style.display === 'none' ? 'flex' : 'none';
-}
-
-function wiz3SelectWorkflow(i) {
-  _wiz.selectedWorkflow = _wiz.workflows[i];
-  // Re-render workflow card and hide picker
-  const card = document.getElementById('wiz3-wf-card');
-  const picker = document.getElementById('wiz3-wf-picker');
-  const sel = _wiz.selectedWorkflow;
-  const cfg = LENS_CONFIGS[_wiz.lens];
-  if (card) card.innerHTML = `
-    <div style="padding:14px 16px;background:var(--bg-tertiary);border-radius:8px;border:2px solid var(--accent)">
-      <div style="font-size:14px;font-weight:700;color:var(--accent);margin-bottom:4px">⚡ ${escHtml(sel.name)}</div>
-      ${sel.description ? `<div style="font-size:13px;color:var(--text-secondary)">${escHtml(sel.description)}</div>` : ''}
-      <div style="font-size:11px;color:var(--text-secondary);margin-top:6px;font-style:italic">selected for this ${cfg.noun.toLowerCase()}</div>
-    </div>`;
-  if (picker) picker.style.display = 'none';
-}
-
-async function wizLaunch() {
-  const cfg   = LENS_CONFIGS[_wiz.lens];
-  const area  = document.getElementById('content-area');
-  if (!_wiz.artifact?.path) { toast(`Select a ${cfg.seedWord} first.`, true); return; }
-
-  const btn   = document.getElementById('wiz-launch-btn');
-  const errEl = document.getElementById('wiz-launch-error');
-
-  // Swap the button for a non-interactive status indicator
-  const statusSpan = document.createElement('span');
-  statusSpan.id = 'wiz-creating-status';
-  statusSpan.style.cssText = 'display:inline-flex;align-items:center;gap:8px;font-size:14px;color:var(--text-secondary);padding:8px 0';
-  statusSpan.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px"></span>Creating your ' + cfg.noun + '…';
-  if (btn) { btn.style.display = 'none'; btn.parentNode.insertBefore(statusSpan, btn); }
-  if (errEl) errEl.textContent = '';
-
-  const restoreBtn = () => {
-    statusSpan.remove();
-    if (btn) { btn.style.display = ''; }
-  };
-
-  // Create the lens file via backend
-  let r;
-  try {
-    r = await apiPost(cfg.endpoint, { title: _wiz.title, artifact_path: _wiz.artifact.path });
-  } catch(e) {
-    restoreBtn();
-    if (errEl) errEl.textContent = e.message;
-    return;
-  }
-
-  // Backend may return 200 with ok:false for unsupported artifact types
-  if (!r.ok) {
-    restoreBtn();
-    if (errEl) errEl.textContent = r.message || `Cannot process this artifact type (${r.artifact_type || 'unknown'}).`;
-    return;
-  }
-
-  try {
-    const lensPath = r.path;
-    toast(`✅ ${cfg.noun} created`);
-
-    const wf      = _wiz.selectedWorkflow;
-    const wfName  = wf?.name || 'Prism Workflow';
-    const artifactPath = _wiz.artifact?.path || '';
-    const assetLines = [
-      `📄 **${cfg.seedWord}:** \`${artifactPath}\``,
-      ..._wiz.subAssets.map(a => `📎 **Sub-asset:** \`${a.path}\``),
-    ].join('\n');
-
-    const greeting =
-      `${cfg.noun} **"${_wiz.title}"** has been created at \`${lensPath}\`.\n\n` +
-      `**Assets loaded:**\n${assetLines}\n\n` +
-      (wf
-        ? `I'm ready to lens these through the **${wfName}** workflow. Shall we begin?`
-        : `No workflow selected. You can describe how you'd like to process these assets.`);
-
-    const lensKey        = _wiz.lens;
-    const savedTitle     = _wiz.title;
-    const savedSubAssets = [..._wiz.subAssets];
-    _wiz = { step: 1, title: '', artifact: null, lens: lensKey, subAssets: [], selectedWorkflow: null, workflows: [] };
-
-    renderWorkflowChat(area, {
-      title:         wf ? wfName : `${cfg.noun} Workflow`,
-      workflowId:    wf?.id || 'ad-hoc',
-      lensKey:       lensKey,
-      artifactPath:  lensPath,
-      gibberishPath: artifactPath,
-      artifactTitle: savedTitle,
-      subAssets:     savedSubAssets,
-      agentGreeting: greeting,
-    });
-  } catch(e) {
-    console.error('wizLaunch post-create error:', e);
-    if (area) area.innerHTML = `
-      <div class="card" style="color:#dc2626;max-width:560px">
-        <h3 style="margin-bottom:8px">⚠️ UI Error After Creation</h3>
-        <p style="margin-bottom:8px">${escHtml(e.message)}</p>
-        <pre style="font-size:11px;overflow:auto;white-space:pre-wrap;background:#fef2f2;padding:8px;border-radius:4px">${escHtml(e.stack || '')}</pre>
-        <p style="margin-top:12px;font-size:13px">Your ${cfg.noun} <strong>was created</strong> successfully — only the UI transition failed. Refresh the page to continue.</p>
-      </div>`;
-    toast(`⚠️ UI error: ${e.message}`, true);
-  }
-}
-
-function wizBack() {
-  _wiz.step = Math.max(1, _wiz.step - 1);
-  renderWizardStep(document.getElementById('content-area'));
-}
-
 // ── Rationalizations ────────────────────────────────────────────────────────
 
 async function renderRationalizations(area) {
-  setTopbarAction(`<button class="btn btn-primary btn-sm" onclick="newRationalization()">＋ New rationalization</button>`);
+  setTopbarAction(`<button class="btn btn-ghost btn-sm" onclick="gotoView('dashboard')">◈ Crafting Table</button>`);
 
   const tree = await apiGet('/tree');
   const node = tree.find(n => n.name === 'rationalizations');
@@ -1838,8 +1268,8 @@ async function renderRationalizations(area) {
     area.innerHTML = `
       <div class="empty-state">
         <div class="es-icon">🧩</div>
-        <p>No rationalizations yet. Document the reasoning behind key choices.</p>
-        <button class="btn btn-primary" style="margin-top:16px" onclick="newRationalization()">＋ New rationalization</button>
+        <p>No rationalizations yet. Bring the reasoning behind a choice to the Crafting Table.</p>
+        ${_craftingTablePointer('rationalization')}
       </div>`;
     return;
   }
@@ -1932,16 +1362,35 @@ function renderWorkflowChat(area, config = {}) {
   setTopbarAction('');
   _chatRender(area);
 
-  // If workflow needs artifact loaded at start, do it now
-  if (_chat.artifactPath && _chat.workflowId === 'requirements-default') {
-    _wfReqInit();
-  }
-  if (_chat.artifactPath && _chat.workflowId === 'rationalizations-default') {
-    _wfRatInit();
-  }
-  if (_chat.artifactPath && _chat.workflowId === 'hypotheses-default') {
-    _wfHypInit();
-  }
+  // Hand off to the runner for this workflow, if one exists. A workflow with
+  // a definition but no runner (e.g. ux-bridge-default) still gets the chat
+  // surface — it just does not drive a state machine. The Workflows view
+  // labels those explicitly rather than letting them look live.
+  const init = _wfRunnerFor(_chat.workflowId, 'Init');
+  if (_chat.artifactPath && init) init();
+}
+
+// ── Workflow runner registry ────────────────────────────────────────────────
+// The single place that knows which workflow ids have a runner in app.js.
+// Three dispatch sites previously hardcoded the same three ids inline; the
+// Workflows view needs the same knowledge to label a workflow honestly, so it
+// lives here once. Adding a runner means adding one line here — and the
+// "defined, not yet runnable" badge disappears on its own.
+const _WF_RUNNERS = {
+  'requirements-default':     { Init: '_wfReqInit', Respond: '_wfReqRespond', PostProcess: '_wfReqPostProcessMsg' },
+  'rationalizations-default': { Init: '_wfRatInit', Respond: '_wfRatRespond', PostProcess: '_wfRatPostProcessMsg' },
+  'hypotheses-default':       { Init: '_wfHypInit', Respond: '_wfHypRespond', PostProcess: '_wfHypPostProcessMsg' },
+};
+
+function _wfRunnerFor(workflowId, kind) {
+  const entry = _WF_RUNNERS[workflowId];
+  if (!entry || !entry[kind]) return null;
+  const fn = window[entry[kind]];
+  return typeof fn === 'function' ? fn : null;
+}
+
+function _wfHasRunner(workflowId) {
+  return Object.prototype.hasOwnProperty.call(_WF_RUNNERS, workflowId);
 }
 
 function _chatRender(area) {
@@ -2128,15 +1577,17 @@ function _chatSend() {
 }
 
 function _wfDispatch(userText) {
-  if (_chat.workflowId === 'requirements-default') {
-    _wfReqRespond(userText);
-  } else if (_chat.workflowId === 'rationalizations-default') {
-    _wfRatRespond(userText);
-  } else if (_chat.workflowId === 'hypotheses-default') {
-    _wfHypRespond(userText);
-  } else {
-    _chatAgentSay('I received your message. Agent integration for this workflow is still being configured — check back soon.');
-  }
+  const respond = _wfRunnerFor(_chat.workflowId, 'Respond');
+  if (respond) { respond(userText); return; }
+  // No runner for this workflow. Say so plainly and point at the door that
+  // would fix it, rather than implying the agent is merely "being configured"
+  // (F8/GN-006: no dead affordances, and no pretending a door opens).
+  _chatAgentSay(
+    `No runner is wired up for **${_chat.title || _chat.workflowId}** yet, so I can't ` +
+    `drive this workflow — the chat surface is here, but the steps are unimplemented.\n\n` +
+    `Its definition and skills are in the vault under \`workflows/${_chat.workflowId}/\`. ` +
+    `Writing the runner is the work that makes it runnable.`
+  );
 }
 
 function _chatAgentSay(text, html) {
@@ -2259,14 +1710,60 @@ function wfOptB() {
   _chatAgentSay('Please provide additional context below (type, attach a file, or dictate). When ready, send it and I will re-run the synthesis with your enriched input.');
 }
 function wfOptC() {
+  // Option C — hand the finished artifact to another workflow.
+  //
+  // This used to re-open the Lens Wizard at step 3 so the human could pick a
+  // downstream workflow. The wizard is retired (the Crafting Table is the one
+  // door), so the picker moved here: the list is read from GET /workflows,
+  // and the chosen workflow launches with the current artifact pre-loaded.
   _chat.wfStep = 'done';
   const lensKey = _chat.lensKey || 'requirements';
   const cfg = LENS_CONFIGS[lensKey] || {};
-  _chatAgentSay(`Re-surfacing the ${cfg.noun || 'Lens'} workflow picker…`);
-  setTimeout(() => {
-    _wiz = { step: 3, title: _chat.artifactTitle || '', artifact: { path: _chat.artifactPath }, lens: lensKey, subAssets: [], selectedWorkflow: null, workflows: [] };
-    renderWizStep3(document.getElementById('content-area'));
-  }, 600);
+  const area = document.getElementById('content-area');
+
+  apiGet('/workflows').then(wfs => {
+    const others = wfs.filter(w => w.id !== _chat.workflowId);
+    if (!others.length) {
+      _chatAgentSay('No other workflows are available to hand this to.');
+      return;
+    }
+    area.innerHTML = `
+      <div style="max-width:560px">
+        <div class="card">
+          <h3 style="font-size:16px;font-weight:700;margin-bottom:6px">Send to another workflow</h3>
+          <p style="font-size:13.5px;color:var(--text-secondary);margin-bottom:16px">
+            <strong>${escHtml(_chat.artifactTitle || cfg.noun || 'Artifact')}</strong> will be pre-loaded
+            as the input to whichever you pick.
+          </p>
+          ${others.map((w, i) => `
+            <button class="desk-door" data-wf="${escHtml(w.id)}"
+              onclick="_wfOptCSend('${escHtml(w.id)}')"
+              style="flex-direction:column;align-items:flex-start;gap:2px;width:100%;text-align:left;margin-bottom:8px">
+              <span style="font-weight:600">${escHtml(w.name)}</span>
+              <span style="font-size:11.5px;color:var(--text-secondary);font-weight:400">${escHtml(w.description || '')}</span>
+            </button>`).join('')}
+          <button class="btn btn-ghost btn-sm" onclick="renderDesk(document.getElementById('content-area'))"
+            style="margin-top:8px">← Back to the Crafting Table</button>
+        </div>
+      </div>`;
+  }).catch(e => {
+    _chatAgentSay('Could not load the workflow list: ' + e.message);
+  });
+}
+
+function _wfOptCSend(workflowId) {
+  const lensKey = _chat.lensKey || 'requirements';
+  const cfg = LENS_CONFIGS[lensKey] || {};
+  renderWorkflowChat(document.getElementById('content-area'), {
+    title:         cfg.noun ? cfg.noun + ' Workflow' : 'Workflow',
+    workflowId:    workflowId,
+    lensKey:       lensKey,
+    artifactPath:  _chat.artifactPath,
+    gibberishPath: _chat.gibberishPath,
+    artifactTitle: _chat.artifactTitle,
+    subAssets:     _chat.subAssets || [],
+    agentGreeting: `Handing **${_chat.artifactTitle || 'the artifact'}** to the **${workflowId}** workflow. Loading the input…`,
+  });
 }
 async function wfOptD() {
   _chat.wfStep = 'done';
@@ -2280,7 +1777,10 @@ async function wfOptD() {
       toast(`⚠️ Could not send to queue: ${e.message}`, true);
     }
   }
-  await renderView('ingest');
+  // Option D returns the artifact to the staged queue. The Ingest page used to
+  // be where the human landed to see it; that surface is retired and the queue
+  // is now listed on the Crafting Table, so that is where we go.
+  await renderView('dashboard');
 }
 // wfOptE removed with its button (F8) — the integration door does not exist
 // until an integration is configured; see vault/knowledge/integrations/.

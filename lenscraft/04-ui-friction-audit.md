@@ -349,6 +349,195 @@ document matches it, plus a vault-wide scan and a premise check that no
 integration config exists. It has teeth both ways: reintroducing Option E
 fails 1 check, reintroducing the bad path fails 2.
 
+### F17 — One door: the Lens Wizard is retired ✅ resolved 27 Sep 2026
+~~F7 made the Crafting Table the front door, but the three-step Lens Wizard
+survived behind six "＋ New …" buttons (topbar and empty state, one pair per
+lens). Two ways to create a lens, one of them three screens long, requiring a
+title the machine can derive. The wizard's step 3 was also the only place a
+non-default workflow could be chosen.~~
+
+**Decided:** the Crafting Table is the one door. Decision recorded by the
+maintainer; this entry records what it cost and what it bought.
+
+**Removed:** 601 lines — `_wiz` state, `_startWizard`, the three `new*()`
+entry points, and all three step renderers with their handlers.
+
+**Rewritten rather than deleted — Option C.** Post-processing "C — send to
+another workflow" re-opened wizard step 3, so deleting the wizard would have
+silently broken it. It now reads `GET /workflows`, lists the other workflows,
+and launches the chosen one with the artifact pre-loaded. Same behaviour,
+new home, plus a way back to the desk.
+
+**Lens views keep their job.** Requirements / Hypotheses /
+Rationalizations are for *working* lenses — open, ▶ Continue Workflow, emit,
+delete — and all of that is untouched. Only creation moved. Their empty
+states and topbar now point at the Crafting Table rather than offering a
+second creation path, so every view still hands the human a next action
+(GN-006) without re-scattering entry points.
+
+**The dead `/status` endpoint went with it.** Nothing consumed it — the desk
+reads `/lenses`. What remained counted `stakeholder_count` and
+`days_since_sweep` against vault folders that are permanently empty, plus a
+dwell histogram whose UI F7 had already removed. Counting nothing and
+labelling it a metric is GN-005 (declaring a focal point that does not
+exist). Removed: `get_status()`, the route, `HYPOTHESIS_STATUSES`.
+
+**The gap this exposes, made visible (option D).** Retiring the wizard
+removed the only door to `ux-bridge-default`, which has an agent definition,
+a skill and an 11-field process doc but **no runner in `app.js`**. So:
+
+- Workflow runner ids now live in one `_WF_RUNNERS` registry; both dispatch
+  sites resolve through it instead of hardcoding three ids inline.
+- The Workflows view labels every definition **▶ runnable** or
+  **⚠️ defined, not yet runnable**, from that same registry — so a definition
+  without a runner can no longer look live (GN-005).
+- A chat opened for a runnerless workflow now says so plainly and names the
+  fix, instead of claiming the integration "is still being configured".
+
+Writing a runner makes the badge clear itself. Same door discipline F8
+applied to the integration option.
+
+**Also fixed in passing:** `.badge.warn` was used throughout `index.html` but
+never defined in any stylesheet, so those badges rendered unstyled. Defined,
+along with `.badge.ok`.
+
+**New suite** `scripts/e2e-verify-f17.js` (49 checks) — wizard gone with no
+dangling references, Option C rebuilt, registry is the single source of truth
+with every registered function verified to exist, badge reads the registry
+rather than an exclusion list, and the dead counters are gone while
+`/lenses`, `/workflows` and `/ingest` survive. Teeth verified: injecting four
+regressions (a wizard ghost, a hardcoded dispatch, a fake registry entry)
+fails 4 checks.
+
+**Two pre-existing suites had to change, honestly:**
+
+- `e2e-verify-f12.js` probed `/status` for its CORS checks. Removing the
+  endpoint broke it — **a regression I introduced and caught**, repointed to
+  `/lenses`.
+- `e2e-verify-f9.js` had a whole section exercising wizard quick-ingest
+  against the live backend. The surface no longer exists, so the section was
+  **deleted, not skipped** — a skip would read as coverage that is still
+  there. F9's law is unchanged and still asserted: one ingest path, one
+  private decision, now over the two remaining surfaces.
+
+### F18 — The Ingest page retired; staging folded into the desk ✅ resolved 27 Sep 2026
+~~The standalone Ingest page survived F17's wizard retirement as the sidebar's
+"Enlighten" section — duplicating the desk's file input, title handling, type
+inference and private toggle, and offering a second way to do the same thing.~~
+
+**But it was not a duplicate, and that is the finding.** `submitIngest()`
+wrote to `ingestion/unprocessed/` and **stopped**. The desk always continued:
+ingest → create lens → launch the chat. So the Ingest page was the
+**staging buffer** — the only way to hold raw thought without processing it.
+
+And staging was broken: the queue was **write-only**. The Ingest page could
+fill it; the wizard's step-2 artifact picker (retired in F17) was the only
+thing that could read it. Delete the page and staged thought had nowhere to
+go and no way back.
+
+**Fix — move the capability, then delete the surface:**
+
+- `deskStageOnly()` — the desk's new "📥 Not yet — just hold it in the queue"
+  door. Ingests through the same shared builder with an explicit
+  `is_private`, clears the desk, leaves the human with the next thought.
+- **The desk now lists the queue**, with Load and Discard per row. This part
+  did not exist anywhere before.
+- `_rawIngestBody()` unwraps a queued artifact back to raw thought. A queued
+  file is a full ingest document — H1 title, `**Key:** Value` provenance
+  header, dividers, empty annotation stubs — so loading it verbatim would
+  have double-wrapped the thought on re-submit.
+- Discard confirms first, and states that a public artifact's immutable
+  source copy is **retained**, because `DELETE` cannot reach `source/`.
+  Saying so beats implying the delete was total.
+
+Removed: `renderIngest`, `submitIngest`, `togglePrivate`, `handleFileSelect`,
+the `_isPrivate` state, the desk's duplicate `_qiPrivate` flag, the "Enlighten"
+sidebar section, and the orphaned `.drop-zone` / `.dz-*` styles.
+
+**Repaired in the same pass:** post-processing Option D ("return to
+Unprocessed queue") called `renderView('ingest')` — a page this change
+deletes. It now lands on the Crafting Table, which is where the queue is
+visible. Found by grepping for the retired view, not by the compiler.
+
+**New suite** `scripts/e2e-verify-f18.js` (14 checks) drives staging
+end-to-end against the live backend, including that a loaded artifact
+round-trips **without** its ingest wrapper and that the source copy survives a
+discard. `e2e-verify-f17.js` grows to 71 checks covering the retirement and
+the replacement.
+
+**Two pre-existing suites tested the deleted page.** Both had dead blocks
+**deleted, not skipped** — F9's Ingest section, and F10's "all three surfaces
+share one rule", which now asserts the desk *is* the rule and that the retired
+surfaces are gone. Both laws still hold and are still driven live: F9 submits
+private and public artifacts and asserts the suffix, header and mirror
+behaviour; F10 drives a real classification to a real verdict.
+
+**The two read the maintainer's framing on `knowledge/integrations/`:** that
+folder is a declared extension point, primarily for outputs, open to inputs
+too — not inert scaffolding. Option E is therefore absent *by design* rather
+than by omission, which is what F15's wording already says. Recorded here so
+a future session does not "clean up" that folder again.
+
+**Still open, and a real gap rather than debt:** external documents cannot be
+ingested. Both surfaces accept `.md .txt .csv .json .rtf` and read via
+`readAsText()`, so a PDF, DOCX or HTML file cannot be brought in at all.
+Parsing those means either a dependency (which F13 just settled against) or a
+conversion step — a piece of work, not a cleanup. Not started.
+
+### F19 — A real browser check; two rendering bugs only a DOM could find ✅ resolved 27 Sep 2026
+~~Every other suite drives `app.js` in a Node VM with a stubbed DOM. That is
+fast and honest about application logic, but a stub cannot tell you whether
+the page RENDERS: whether a relative `<script src>` resolves, whether a
+stylesheet applies, whether an `onclick` reaches a global, whether markdown
+becomes real elements. Those were exactly the things F17/F18 changed, and
+exactly what nothing covered.~~
+
+**Fix:** `scripts/e2e-verify-f19.js` (44 checks) runs the SPA in **real
+Chrome** over the DevTools Protocol, driving it through real clicks. No npm
+dependency — `scripts/lib/cdp.js` is a small stdlib WebSocket/CDP client, so
+the stdlib-only constraint holds. It uses the Playwright-cached Chrome for
+Testing binary, or any Chrome via `PRISM_CHROME`.
+
+**It immediately found two real bugs, both invisible to every other check:**
+
+1. **Empty lens badges rendered a dash instead of `0`.** `updateBadges()` used
+   `b.requirements || '–'`, and `0` is falsy — so a fresh install showed three
+   dashes where it should have shown three zeros. The API was returning
+   `requirements: 0` the whole time; the badge lied about it. Now only
+   `null`/`undefined`/`''` mean "not loaded".
+2. **The "not yet runnable" tooltip silently truncated.** The title was
+   written as a multi-line template literal with a trailing `+`, which puts a
+   literal **newline inside the HTML attribute**. The browser ends the
+   attribute value at the line break, so the tooltip stopped mid-sentence. The
+   source reads perfectly; only a rendered DOM shows it. Now a single-line
+   string, passed through `escHtml`.
+
+Both shipped in F17 and are exactly the class of defect a stubbed DOM cannot
+catch: a falsy-zero coercion, and a newline inside an attribute.
+
+**One more, in the test harness itself:** my first front door (used because
+port 80 needs root) stripped the `Host` header when proxying, which made
+F12's same-origin guard reject the real app's own browser requests. That is
+worth recording — **the guard's Host-preservation requirement is a real
+deployment constraint, not a theoretical one.** Both shipped front doors
+satisfy it (`ProxyPreserveHost On` / Caddy default); anything that does not
+will break the app. F19 now runs against a front door that preserves Host, and
+the README's security-posture section already warns about it.
+
+**Coverage added:** the page boots with no console errors and no uncaught
+exceptions; all scripts are same-origin; the stylesheet applies; the sidebar
+is exactly the six expected views with the retired Ingest item gone; the desk
+renders all its doors; **staging works through real clicks** (type → stage →
+queue card appears → load → raw thought returns without its ingest wrapper →
+discard); markdown becomes real elements and F14's hardening holds in a real
+DOM (`<img onerror>` stripped, `javascript:` link inert, no XSS executed);
+and the Workflows view labels runner status from the registry.
+
+Teeth verified: restoring the CDN `<script src>` fails 2 checks.
+
+**Note on exit codes:** `3` means "no browser available" — distinct from `1`
+("checks failed") — so a missing Chrome is never mistaken for a regression.
+
 ---
 
 ## The pattern in both columns
@@ -405,6 +594,36 @@ dependency, and **zero** change to how any of the 49 vault files render. A
 deferred this as "a product-intent call" without having measured the blast
 radius, and the measurement was the thing that would have made the call
 cheap. Measure before deferring.
+
+**Amendment 26 Sep 2026 (fifth pass):** F17 — the Lens Wizard retired, the
+Crafting Table is the one door, the dead `/status` endpoint removed, and
+workflow runner status made visible in the Workflows view.
+
+That last one is the item worth carrying forward. F17's *deletion* was clean,
+but it exposed a capability that had been quietly broken for a long time:
+`ux-bridge-default` has a full agent definition, a skill and a process doc,
+and no runner. The wizard's step 3 was the only thing that made it look
+selectable. Removing the wizard did not break it — it had never worked — but
+it removed the last place the gap was visible. Hence D: the gap is now
+labelled in the product rather than inferred from code.
+
+The general shape: **a retired surface is also a visibility mechanism.** Before
+deleting anything that touches a capability, check whether its existence is
+what makes that capability discoverable. If so, replace the discovery with
+something explicit before you remove the surface — or the gap becomes silent.
+
+**Amendment 27 Sep 2026:** F18 — the Ingest page retired too, with its
+staging capability folded into the desk. The same lesson, one level down: the
+page looked like a duplicate of the desk, and it was not — it was the only
+way to stop short of processing, and the only writer for a queue that had no
+reader. **Before deleting a surface, check what only it can do.** Two
+retirements in a row turned up a capability hiding behind each.
+
+And the practical version, from the cut itself: `renderView('ingest')`
+survived inside Option D and would have thrown at runtime. The compiler
+cannot see it, because `renderView` takes a string. When removing a view,
+grep for its *name* — the symbol is gone, but every string that reaches it is
+not.
 
 A pattern worth naming, now that three items have landed in the same place:
 **F12, F13 and F15 were all invisible to the friction lens**, and two of the

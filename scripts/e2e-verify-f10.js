@@ -151,34 +151,34 @@ const PROSE = `so basically the ${TOKEN} export feature keeps failing whenever t
   await p1;
   check('stale classification response dropped', byId['desk-type'].value !== 'code');
 
-  // ── 5) All three surfaces share one rule ─────────────────────────────────
-  await run('renderIngest(document.getElementById("content-area"))');
-  check('legacy ingest registers a classify surface', !!run('_classifySurfaces.ing'));
-  check('ingest surface hint element exists',
-    String(byId['ing-type-hint'] && byId['ing-type-hint'].innerHTML || '') === '' ||
-    true);
-  // identical content -> identical verdict on every surface (no local drift)
-  byId['ing-content'].value = PYCODE;
-  run('_classifyTrigger(_classifySurfaces.ing)');
-  await sleep(700);
-  check('legacy ingest surface gets same verdict', byId['ing-type'].value === 'code');
-
-  // quick-ingest: same wiring shape, same backend
-  run(`_classifySurfaces.qi = { selectId: 'qi-type', contentId: 'qi-content',
-      hintId: 'qi-type-hint', filename: '', seq: 0, touched: false,
+  // ── 5) One surface, one rule ────────────────────────────────────────────
+  // F17 removed the Ingest page and the wizard, so there is exactly one
+  // classify surface left. The law F10 established — one shared rule, no
+  // per-surface drift — now holds by construction, and the checks below
+  // assert both that the desk is that surface and that the retired ones are
+  // genuinely gone.
+  check('the desk registers the classify surface', !!run('_classifySurfaces.desk'));
+  check('the desk type select exists', !!byId['desk-type']);
+  check('the desk hint element exists', !!byId['desk-type-hint']);
+  // Build a fresh surface: the stale-response test above deliberately left
+  // `touched` set, and a touched surface suppresses inference by design (the
+  // human has already spoken). Start clean, as a fresh render would.
+  run(`_classifySurfaces.desk = { selectId: 'desk-type', contentId: 'desk-content',
+      hintId: 'desk-type-hint', filename: '', seq: 0, touched: false,
       timer: null, lastKey: null };`);
-  byId['qi-content'] = byId['qi-content'] || new El('qi-content');
-  byId['qi-content'].value = PYCODE;
-  await run(`(async () => { await _classifyRun(_classifySurfaces.qi); })()`);
-  check('quick-ingest surface gets same verdict', byId['qi-type'].value === 'code');
+  byId['desk-content'].value = PYCODE;
+  await run(`(async () => { await _classifyRun(_classifySurfaces.desk); })()`);
+  check('the one surface gets the shared verdict', byId['desk-type'].value === 'code');
+  check('the retired ingest surface is gone', !/renderIngest\(/.test(script));
+  check('the retired quick-ingest surface is gone',
+    !/_classifySurfaces\.qi|_classifySurfaces\.ing/.test(script));
 
   // old hardcoded extension lists are gone from the source
   check('deskFileSelect has no hardcoded ext list',
     !/deskFileSelect[\s\S]{0,900}\['js','ts','py'/.test(script));
-  check('handleFileSelect has no hardcoded ext list',
-    !/handleFileSelect[\s\S]{0,1400}\['mp3','mp4'/.test(script));
-  check('handleQIFileSelect has no hardcoded ext list',
-    !/handleQIFileSelect[\s\S]{0,900}\['mp3','mp4'/.test(script));
+  check('no retired surface has a hardcoded ext list',
+    !/handleFileSelect[\s\S]{0,1400}\['mp3','mp4'/.test(script)
+    && !/handleQIFileSelect[\s\S]{0,900}\['mp3','mp4'/.test(script));
 
   // ── 6) End-to-end: desk submit carries the inferred type ─────────────────
   // Lens creation only accepts text artifacts, so the e2e path uses prose

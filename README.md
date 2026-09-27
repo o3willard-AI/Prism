@@ -93,6 +93,38 @@ produce partial output). Surfacing unresolved gaps is a first-class
 feature: an agent that receives "here's what is unresolved and why it
 matters" can extend the thought instead of hallucinating.
 
+A workflow is a *definition* in `vault/workflows/`; a workflow is
+*runnable* only when `app.js` has a runner for it. The Workflows view labels
+each definition **▶ runnable** or **⚠️ defined, not yet runnable**, read from
+the single `_WF_RUNNERS` registry — so a definition cannot look like a
+working door. Writing a runner makes the badge clear itself.
+
+## The one door
+
+The **Crafting Table** is the only entry point. Paste or drop raw thought,
+pick a lens, and Prism refacts it and opens the workflow — one click, no
+wizard. The sidebar's other views are for *working* on lenses that already
+exist: open one, continue its workflow, emit it, delete it.
+
+Two doors on the desk, because "what do you want to do with this" is the
+only real question:
+
+- **a lens** — refract now
+- **📥 Not yet** — stage it in `ingestion/unprocessed/` (local, never
+  synced) and refract later. The desk lists that queue with Load and Discard
+  per item, so staged thought is never stranded.
+
+`vault/knowledge/integrations/` is the declared extension point for
+capabilities that do not exist yet — primarily emission targets, open to
+inputs as well. It ships empty on purpose, which is why there is no "emit to
+integration" option today: a door appears when something can open it.
+
+## Known gap
+
+External documents (PDF, DOCX, HTML) **cannot be ingested** — input is
+text-only (`.md .txt .csv .json .rtf`). Supporting them means either a
+dependency or a conversion step. Recorded, not started.
+
 | Optic | Refracts | Into |
 |---|---|---|
 | intent-synth | single-speaker dictation / brain dump | 5 Intention Blocks |
@@ -159,3 +191,29 @@ communication into agentic context**. See the project history in commits.
 ## License
 
 MIT — see LICENSE.
+
+---
+
+## Tests
+
+```
+scripts/e2e-verify*.js          node   the regression suites
+scripts/e2e-verify-f19.js       node   the SPA in a REAL browser (Chrome, no npm)
+```
+
+The other suites run `app.js` in a Node VM with a stubbed DOM. F19 drives the
+real page in real Chrome over the DevTools Protocol, because a stub cannot
+tell you whether the page *renders* — and that is where two shipped bugs hid
+(a `0` badge shown as a dash, and a tooltip truncated by a newline inside an
+HTML attribute).
+
+F19 needs a browser and exits **3** if it cannot find one, so "no Chrome" is
+never mistaken for "checks failed". It uses the Playwright-cached Chrome for
+Testing binary, or any Chrome via `PRISM_CHROME`:
+
+```
+npx playwright install chromium      # if you have no Chrome
+```
+
+It also needs the stack running and a front door that **preserves `Host`** (see
+Security posture above).

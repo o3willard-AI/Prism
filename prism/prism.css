@@ -40,6 +40,16 @@
     font-size: 11px; font-weight: 500;
     background: #f3f4f6; color: var(--text-secondary);
   }
+  /* Attention badge. Used by the sidebar lens badges and by the Workflows
+     view's "defined, not yet runnable" marker — it was referenced in markup
+     but never defined here, so those badges were rendering unstyled. */
+  .badge.warn {
+    background: #fffbeb; color: #b45309; border: 1px solid #fde68a;
+  }
+  /* Runnable marker: the positive counterpart to .badge.warn. */
+  .badge.ok {
+    background: #ecfdf5; color: #15803d; border: 1px solid #bbf7d0;
+  }
   .badge-candidate  { background: #f3f4f6; color: var(--status-candidate); }
   .badge-proposed   { background: #eff6ff; color: var(--status-proposed); }
   .badge-validated  { background: #ecfdf5; color: var(--status-validated); }
@@ -134,24 +144,8 @@
     flex: 1;
   }
 
-  /* ── Drag and drop zone ──────────────────────────────────── */
-  .drop-zone {
-    border: 2px dashed var(--border);
-    border-radius: 10px; padding: 32px 20px;
-    text-align: center; cursor: pointer;
-    transition: border-color 0.15s, background 0.15s;
-    background: var(--bg-card); margin-bottom: 18px;
-    position: relative;
-  }
-  .drop-zone:hover, .drop-zone.drag-over {
-    border-color: var(--accent); background: #f0f4ff;
-  }
-  .drop-zone.drag-over { background: #e8edff; }
-  .drop-zone .dz-icon  { font-size: 28px; margin-bottom: 8px; }
-  .drop-zone .dz-label { font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
-  .drop-zone .dz-sub   { font-size: 12px; color: var(--text-secondary); }
-  .drop-zone .dz-loaded { font-size: 13px; color: var(--status-validated); font-weight: 600; margin-top: 6px; }
-  .drop-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+  /* (The .drop-zone / .dz-* block went with the Ingest page in F17 — the
+     Crafting Table's .desk-drop is the one drop surface now.) */
 
   /* ── Toggle switch ───────────────────────────────────────── */
   .toggle-row {
