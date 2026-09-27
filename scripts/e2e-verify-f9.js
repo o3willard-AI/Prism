@@ -64,7 +64,7 @@ const installSpy = (name, fn) => Object.defineProperty(sandbox, name, {
 });
 installSpy('renderView', async v => { sandbox.__lastView = v; });
 installSpy('renderWorkflowChat', (area, cfg) => { sandbox.__chatCfg = cfg; });
-installSpy('renderWizardStep', () => { sandbox.__wizReRendered = true; });
+// (the renderWizardStep spy went with the wizard in F17)
 
 vm.createContext(sandbox);
 const run = (expr, t = 15000) => vm.runInContext(expr, sandbox, { timeout: t });
@@ -88,18 +88,26 @@ const PROSE = `so basically the ${TOKEN} export feature keeps failing whenever t
     /function ingestArtifact[\s\S]{0,400}apiPost\('\/ingest'/.test(script));
   check('deskSubmit routes through ingestArtifact',
     /function deskSubmit[\s\S]{0,800}ingestArtifact\(/.test(script));
-  check('submitIngest routes through ingestArtifact',
-    /function submitIngest[\s\S]{0,700}ingestArtifact\(/.test(script));
-  check('wizQuickIngest routes through ingestArtifact',
-    /function wizQuickIngest[\s\S]{0,900}ingestArtifact\(/.test(script));
   check('no hardcoded is_private: false remains in ingest callers',
     !/ingestArtifact\([^)]*is_private:\s*false/.test(script.replace(/\s+/g, ' ')));
   check('deskFileSelect has no inline FileReader',
     !/function deskFileSelect[\s\S]{0,700}new FileReader/.test(script));
   check('handleFileSelect has no inline FileReader',
     !/function handleFileSelect[\s\S]{0,1000}new FileReader/.test(script));
+  // F17 retired the Lens Wizard, so wizard quick-ingest (handleQIFileSelect /
+  // wizQuickIngest) is gone and the third surface no longer exists. F9's law is
+  // "one ingest path, one private decision" — assert the law over whatever
+  // surfaces remain, not a fixed count of them. If the wizard ever returns,
+  // add its surface back here rather than relaxing the check below.
+  check('the wizard quick-ingest surface is retired',
+    !/function wizQuickIngest/.test(script) && !/function handleQIFileSelect/.test(script));
+  // deskSubmit (lens path) + deskStageOnly (staging) + the definition = 3.
+  const ingestCallers = (script.match(/ingestArtifact\(/g) || []).length;
+  check('ingestArtifact has exactly the definition plus two desk callers',
+    ingestCallers === 3, 'found ' + ingestCallers + ' call sites (incl. the definition)');
   check('handleQIFileSelect has no inline FileReader',
-    !/function handleQIFileSelect[\s\S]{0,700}new FileReader/.test(script));
+    !/function handleQIFileSelect[\s\S]{0,700}new FileReader/.test(script)
+      || !/function handleQIFileSelect/.test(script));
 
   // ── 2) Visible private controls exist on every surface ──────────────────
   // (The templates live in app.js now — F11 split the single file.)
@@ -110,10 +118,17 @@ const PROSE = `so basically the ${TOKEN} export feature keeps failing whenever t
     /id="desk-private"/.test(script));
   check('desk label names the consequence',
     /desk-private[\s\S]{0,200}exclude from source copies and repo pushes/.test(script));
-  check('quick-ingest template carries the private checkbox',
-    /id="qi-private"/.test(script));
-  check('Ingest page keeps the private toggle',
-    /id="private-toggle"/.test(script));
+  // The qi-private checkbox belonged to wizard quick-ingest, retired in F17.
+  check('the retired wizard private checkbox is gone',
+    !/id="qi-private"/.test(script));
+  // F17 also retired the standalone Ingest page, so the Crafting Table is the
+  // only ingest surface left. F9's law — one path, one private decision —
+  // is now trivially satisfied by there being one caller.
+  check('the Ingest page is retired', !/function renderIngest/.test(script));
+  check('the Crafting Table is the only ingest surface',
+    !/function submitIngest/.test(script) && !/function handleFileSelect/.test(script));
+  check('the stage-only door replaces the Ingest page',
+    /async function deskStageOnly/.test(script));
 
   // ── 3) ingestArtifact contract ───────────────────────────────────────────
   check('ingestArtifact exists', run('typeof ingestArtifact') === 'function');
@@ -207,43 +222,6 @@ const PROSE = `so basically the ${TOKEN} export feature keeps failing whenever t
     await sleep(500);
   }
   if (pubIng) await fetch('http://localhost/prism/api/file?path=' + encodeURIComponent(pubIng.path), { method: 'DELETE' });
-
-  // ── 6) Wizard quick-ingest honours its own private checkbox ──────────────
-  // Prepare the wizard state without rendering the heavy step-2 template.
-  // (document.getElementById auto-creates the elements in the sandbox.)
-  run(`_wiz = { step: 2, title: 'f9-qi', artifact: null, lens: 'requirements', subAssets: [], selectedWorkflow: null, workflows: [] }`);
-  run(`document.getElementById('qi-type').value = 'unordered'`);
-  run(`document.getElementById('qi-title').value = ${JSON.stringify('f9-qi-' + TOKEN)}`);
-  run(`document.getElementById('qi-content').value = ${JSON.stringify(PROSE)}`);
-  run('_qiPrivate = true');
-  await run('wizQuickIngest()');
-  await sleep(800);
-  check('quick-ingest re-rendered the wizard', sandbox.__wizReRendered === true);
-  check('quick-ingest auto-selected the artifact', !!run('_wiz.artifact && _wiz.artifact.path'));
-  const qiPath = run('_wiz.artifact && _wiz.artifact.path');
-  check('quick-ingested artifact carries -private suffix',
-    String(qiPath || '').includes('-private'));
-  const qiDoc = await api('/prism/api/file?path=' + encodeURIComponent(qiPath));
-  check('quick-ingest private header says Private: yes',
-    String(qiDoc.content || '').includes('**Private:** yes'));
-  await fetch('http://localhost/prism/api/file?path=' + encodeURIComponent(qiPath), { method: 'DELETE' });
-
-  // ── 7) Ingest page toggle still drives the shared path ──────────────────
-  await run('renderIngest(document.getElementById("content-area"))');
-  run('togglePrivate()');
-  check('Ingest toggle flips _isPrivate on', run('_isPrivate') === true);
-  run(`document.getElementById('ing-type').value = 'unordered'`);
-  run(`document.getElementById('ing-title').value = ${JSON.stringify('f9-page-' + TOKEN)}`);
-  run(`document.getElementById('ing-content').value = ${JSON.stringify(PROSE)}`);
-  await run('submitIngest()');
-  await sleep(800);
-  const list3 = await api('/prism/api/list?path=' + encodeURIComponent('ingestion/unprocessed'));
-  const pageIng = (list3 || []).find(f => f.type === 'file' && f.name.includes('f9-page-' + TOKEN));
-  check('Ingest page artifact created', !!pageIng);
-  check('Ingest page private artifact has -private suffix',
-    !!pageIng && pageIng.name.includes('-private'));
-  check('Ingest toggle reset after submit', run('_isPrivate') === false);
-  if (pageIng) await fetch('http://localhost/prism/api/file?path=' + encodeURIComponent(pageIng.path), { method: 'DELETE' });
 
   // Immutable source mirrors live outside the API's DELETE-allowed roots;
   // the harness owns its own noise (same pattern as the F10 harness).

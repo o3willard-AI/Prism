@@ -66,16 +66,18 @@ const PROBE = 'knowledge/resources/skills/f12-probe.md';
 
 (async () => {
   // ── 1. No wildcard CORS header anywhere ────────────────────────────────
+  // Probe /lenses, not /status: the dead status endpoint was removed in F17
+  // (nothing consumed it), and a 404 here would read as a CORS failure.
   section('Wildcard CORS is gone');
-  const noOrigin = await req('/status');
-  check('GET /status with no Origin succeeds', noOrigin.status === 200, 'got ' + noOrigin.status);
-  check('GET /status sends no wildcard ACAO', noOrigin.acao === null,
+  const noOrigin = await req('/lenses');
+  check('GET /lenses with no Origin succeeds', noOrigin.status === 200, 'got ' + noOrigin.status);
+  check('GET /lenses sends no wildcard ACAO', noOrigin.acao === null,
         'ACAO=' + noOrigin.acao);
 
-  const foreign = await req('/status', { headers: { Origin: 'https://evil.example' } });
-  check('GET /status does not echo a foreign origin', foreign.acao === null,
+  const foreign = await req('/lenses', { headers: { Origin: 'https://evil.example' } });
+  check('GET /lenses does not echo a foreign origin', foreign.acao === null,
         'ACAO=' + foreign.acao);
-  check('GET /status still answers a foreign-origin reader (200)',
+  check('GET /lenses still answers a foreign-origin reader (200)',
         foreign.status === 200, 'got ' + foreign.status);
 
   // ── 2. Foreign-origin mutations are refused ────────────────────────────
