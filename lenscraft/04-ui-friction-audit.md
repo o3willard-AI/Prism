@@ -420,6 +420,70 @@ fails 4 checks.
   there. F9's law is unchanged and still asserted: one ingest path, one
   private decision, now over the two remaining surfaces.
 
+### F18 — The Ingest page retired; staging folded into the desk ✅ resolved 27 Sep 2026
+~~The standalone Ingest page survived F17's wizard retirement as the sidebar's
+"Enlighten" section — duplicating the desk's file input, title handling, type
+inference and private toggle, and offering a second way to do the same thing.~~
+
+**But it was not a duplicate, and that is the finding.** `submitIngest()`
+wrote to `ingestion/unprocessed/` and **stopped**. The desk always continued:
+ingest → create lens → launch the chat. So the Ingest page was the
+**staging buffer** — the only way to hold raw thought without processing it.
+
+And staging was broken: the queue was **write-only**. The Ingest page could
+fill it; the wizard's step-2 artifact picker (retired in F17) was the only
+thing that could read it. Delete the page and staged thought had nowhere to
+go and no way back.
+
+**Fix — move the capability, then delete the surface:**
+
+- `deskStageOnly()` — the desk's new "📥 Not yet — just hold it in the queue"
+  door. Ingests through the same shared builder with an explicit
+  `is_private`, clears the desk, leaves the human with the next thought.
+- **The desk now lists the queue**, with Load and Discard per row. This part
+  did not exist anywhere before.
+- `_rawIngestBody()` unwraps a queued artifact back to raw thought. A queued
+  file is a full ingest document — H1 title, `**Key:** Value` provenance
+  header, dividers, empty annotation stubs — so loading it verbatim would
+  have double-wrapped the thought on re-submit.
+- Discard confirms first, and states that a public artifact's immutable
+  source copy is **retained**, because `DELETE` cannot reach `source/`.
+  Saying so beats implying the delete was total.
+
+Removed: `renderIngest`, `submitIngest`, `togglePrivate`, `handleFileSelect`,
+the `_isPrivate` state, the desk's duplicate `_qiPrivate` flag, the "Enlighten"
+sidebar section, and the orphaned `.drop-zone` / `.dz-*` styles.
+
+**Repaired in the same pass:** post-processing Option D ("return to
+Unprocessed queue") called `renderView('ingest')` — a page this change
+deletes. It now lands on the Crafting Table, which is where the queue is
+visible. Found by grepping for the retired view, not by the compiler.
+
+**New suite** `scripts/e2e-verify-f18.js` (14 checks) drives staging
+end-to-end against the live backend, including that a loaded artifact
+round-trips **without** its ingest wrapper and that the source copy survives a
+discard. `e2e-verify-f17.js` grows to 71 checks covering the retirement and
+the replacement.
+
+**Two pre-existing suites tested the deleted page.** Both had dead blocks
+**deleted, not skipped** — F9's Ingest section, and F10's "all three surfaces
+share one rule", which now asserts the desk *is* the rule and that the retired
+surfaces are gone. Both laws still hold and are still driven live: F9 submits
+private and public artifacts and asserts the suffix, header and mirror
+behaviour; F10 drives a real classification to a real verdict.
+
+**The two read the maintainer's framing on `knowledge/integrations/`:** that
+folder is a declared extension point, primarily for outputs, open to inputs
+too — not inert scaffolding. Option E is therefore absent *by design* rather
+than by omission, which is what F15's wording already says. Recorded here so
+a future session does not "clean up" that folder again.
+
+**Still open, and a real gap rather than debt:** external documents cannot be
+ingested. Both surfaces accept `.md .txt .csv .json .rtf` and read via
+`readAsText()`, so a PDF, DOCX or HTML file cannot be brought in at all.
+Parsing those means either a dependency (which F13 just settled against) or a
+conversion step — a piece of work, not a cleanup. Not started.
+
 ---
 
 ## The pattern in both columns
@@ -493,6 +557,19 @@ The general shape: **a retired surface is also a visibility mechanism.** Before
 deleting anything that touches a capability, check whether its existence is
 what makes that capability discoverable. If so, replace the discovery with
 something explicit before you remove the surface — or the gap becomes silent.
+
+**Amendment 27 Sep 2026:** F18 — the Ingest page retired too, with its
+staging capability folded into the desk. The same lesson, one level down: the
+page looked like a duplicate of the desk, and it was not — it was the only
+way to stop short of processing, and the only writer for a queue that had no
+reader. **Before deleting a surface, check what only it can do.** Two
+retirements in a row turned up a capability hiding behind each.
+
+And the practical version, from the cut itself: `renderView('ingest')`
+survived inside Option D and would have thrown at runtime. The compiler
+cannot see it, because `renderView` takes a string. When removing a view,
+grep for its *name* — the symbol is gone, but every string that reaches it is
+not.
 
 A pattern worth naming, now that three items have landed in the same place:
 **F12, F13 and F15 were all invisible to the friction lens**, and two of the
