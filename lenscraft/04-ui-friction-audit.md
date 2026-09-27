@@ -349,6 +349,77 @@ document matches it, plus a vault-wide scan and a premise check that no
 integration config exists. It has teeth both ways: reintroducing Option E
 fails 1 check, reintroducing the bad path fails 2.
 
+### F17 — One door: the Lens Wizard is retired ✅ resolved 27 Sep 2026
+~~F7 made the Crafting Table the front door, but the three-step Lens Wizard
+survived behind six "＋ New …" buttons (topbar and empty state, one pair per
+lens). Two ways to create a lens, one of them three screens long, requiring a
+title the machine can derive. The wizard's step 3 was also the only place a
+non-default workflow could be chosen.~~
+
+**Decided:** the Crafting Table is the one door. Decision recorded by the
+maintainer; this entry records what it cost and what it bought.
+
+**Removed:** 601 lines — `_wiz` state, `_startWizard`, the three `new*()`
+entry points, and all three step renderers with their handlers.
+
+**Rewritten rather than deleted — Option C.** Post-processing "C — send to
+another workflow" re-opened wizard step 3, so deleting the wizard would have
+silently broken it. It now reads `GET /workflows`, lists the other workflows,
+and launches the chosen one with the artifact pre-loaded. Same behaviour,
+new home, plus a way back to the desk.
+
+**Lens views keep their job.** Requirements / Hypotheses /
+Rationalizations are for *working* lenses — open, ▶ Continue Workflow, emit,
+delete — and all of that is untouched. Only creation moved. Their empty
+states and topbar now point at the Crafting Table rather than offering a
+second creation path, so every view still hands the human a next action
+(GN-006) without re-scattering entry points.
+
+**The dead `/status` endpoint went with it.** Nothing consumed it — the desk
+reads `/lenses`. What remained counted `stakeholder_count` and
+`days_since_sweep` against vault folders that are permanently empty, plus a
+dwell histogram whose UI F7 had already removed. Counting nothing and
+labelling it a metric is GN-005 (declaring a focal point that does not
+exist). Removed: `get_status()`, the route, `HYPOTHESIS_STATUSES`.
+
+**The gap this exposes, made visible (option D).** Retiring the wizard
+removed the only door to `ux-bridge-default`, which has an agent definition,
+a skill and an 11-field process doc but **no runner in `app.js`**. So:
+
+- Workflow runner ids now live in one `_WF_RUNNERS` registry; both dispatch
+  sites resolve through it instead of hardcoding three ids inline.
+- The Workflows view labels every definition **▶ runnable** or
+  **⚠️ defined, not yet runnable**, from that same registry — so a definition
+  without a runner can no longer look live (GN-005).
+- A chat opened for a runnerless workflow now says so plainly and names the
+  fix, instead of claiming the integration "is still being configured".
+
+Writing a runner makes the badge clear itself. Same door discipline F8
+applied to the integration option.
+
+**Also fixed in passing:** `.badge.warn` was used throughout `index.html` but
+never defined in any stylesheet, so those badges rendered unstyled. Defined,
+along with `.badge.ok`.
+
+**New suite** `scripts/e2e-verify-f17.js` (49 checks) — wizard gone with no
+dangling references, Option C rebuilt, registry is the single source of truth
+with every registered function verified to exist, badge reads the registry
+rather than an exclusion list, and the dead counters are gone while
+`/lenses`, `/workflows` and `/ingest` survive. Teeth verified: injecting four
+regressions (a wizard ghost, a hardcoded dispatch, a fake registry entry)
+fails 4 checks.
+
+**Two pre-existing suites had to change, honestly:**
+
+- `e2e-verify-f12.js` probed `/status` for its CORS checks. Removing the
+  endpoint broke it — **a regression I introduced and caught**, repointed to
+  `/lenses`.
+- `e2e-verify-f9.js` had a whole section exercising wizard quick-ingest
+  against the live backend. The surface no longer exists, so the section was
+  **deleted, not skipped** — a skip would read as coverage that is still
+  there. F9's law is unchanged and still asserted: one ingest path, one
+  private decision, now over the two remaining surfaces.
+
 ---
 
 ## The pattern in both columns
@@ -405,6 +476,23 @@ dependency, and **zero** change to how any of the 49 vault files render. A
 deferred this as "a product-intent call" without having measured the blast
 radius, and the measurement was the thing that would have made the call
 cheap. Measure before deferring.
+
+**Amendment 26 Sep 2026 (fifth pass):** F17 — the Lens Wizard retired, the
+Crafting Table is the one door, the dead `/status` endpoint removed, and
+workflow runner status made visible in the Workflows view.
+
+That last one is the item worth carrying forward. F17's *deletion* was clean,
+but it exposed a capability that had been quietly broken for a long time:
+`ux-bridge-default` has a full agent definition, a skill and a process doc,
+and no runner. The wizard's step 3 was the only thing that made it look
+selectable. Removing the wizard did not break it — it had never worked — but
+it removed the last place the gap was visible. Hence D: the gap is now
+labelled in the product rather than inferred from code.
+
+The general shape: **a retired surface is also a visibility mechanism.** Before
+deleting anything that touches a capability, check whether its existence is
+what makes that capability discoverable. If so, replace the discovery with
+something explicit before you remove the surface — or the gap becomes silent.
 
 A pattern worth naming, now that three items have landed in the same place:
 **F12, F13 and F15 were all invisible to the friction lens**, and two of the

@@ -91,7 +91,13 @@ emits structured, agent-consumable context with confidence gates
 (95–97%: either ask clarifying questions or produce output; never
 produce partial output). Surfacing unresolved gaps is a first-class
 feature: an agent that receives "here's what is unresolved and why it
-matters" can extend the thought instead of hallucinating.
+matters") can extend the thought instead of hallucinating.
+
+A workflow is a *definition* in `vault/workflows/`; a workflow is
+*runnable* only when `app.js` has a runner for it. The Workflows view labels
+each definition **▶ runnable** or **⚠️ defined, not yet runnable**, read from
+the single `_WF_RUNNERS` registry — so a definition cannot look like a
+working door. Writing a runner makes the badge clear itself.
 
 | Optic | Refracts | Into |
 |---|---|---|
