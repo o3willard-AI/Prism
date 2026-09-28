@@ -24,6 +24,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from extract import UnsupportedDocument, extract_document  # noqa: E402
 import agentic  # noqa: E402
+import adjudicate  # noqa: E402
 import thresholds  # noqa: E402
 
 PORT = 8082
@@ -1215,6 +1216,80 @@ class PrismHandler(http.server.BaseHTTPRequestHandler):
             "log_path": log_rel,
         })
 
+    def handle_adjudicate(self):
+        """F24: ask the AGENT whether a pasted artifact meets the bar.
+
+        Returns both the agent's judgment and the structural floor, and is
+        explicit about which one is which. The floor is demoted: it is
+        context for the human, never an approval. The old design let a regex
+        ratio decide, which meant a document full of "TBD" passed and a good
+        one with unusual headings failed.
+        """
+        body = self.read_body()
+        if not body:
+            return self.send_error_json(400, "Invalid JSON")
+        artifact = (body.get("artifact") or "").strip()
+        lens = (body.get("lens") or "").strip()
+        shape = (body.get("shape") or "").strip()
+        if not artifact:
+            return self.send_error_json(400, "No artifact to judge.")
+        if not lens:
+            return self.send_error_json(400, "No lens named.")
+
+        thr = thresholds.get_threshold(lens)
+
+        # The structural floor. Runs regardless, and is reported as a FLOOR.
+        floor = None
+        if shape:
+            try:
+                if shape not in VERIFY_SHAPES:
+                    floor = {"error": f"unknown shape {shape!r}"}
+                else:
+                    floor = verify_output(shape, artifact)
+            except Exception as exc:
+                floor = {"error": f"structural check failed: {type(exc).__name__}"}
+
+        # The judgment. Absent an integration, this is honestly absent — and
+        # the response says so rather than substituting the floor for it.
+        judgment = None
+        agent_error = None
+        try:
+            cfg = adjudicate.default_config()
+            if cfg is None:
+                agent_error = (
+                    "No agent integration is configured, so nothing was judged. "
+                    "The structural check below is a floor only — it cannot "
+                    "approve an artifact."
+                )
+            else:
+                judgment = adjudicate.judge(artifact, lens, cfg)
+        except agentic.AgentConfigError as exc:
+            agent_error = str(exc)
+        except Exception as exc:
+            agent_error = f"unexpected error judging: {type(exc).__name__}"
+
+        # Two different absences, and conflating them would be a lie in one
+        # direction or the other. `judgment is None` means Prism could not ask
+        # anyone — no integration, service down, bad key. A judgment whose
+        # verdict is UNCERTAIN means the agent WAS asked and said it cannot
+        # tell. The first is a gap in setup; the second is an opinion.
+        if judgment is None:
+            verdict = adjudicate.UNJUDGED
+        else:
+            verdict = judgment["verdict"]
+
+        self.send_json(200, {
+            "ok": True,
+            "lens": lens,
+            "threshold": thr,
+            "verdict": verdict,
+            "asked": judgment is not None,
+            "judgment": judgment,
+            "agent_error": agent_error,
+            "floor": floor,
+            "record": adjudicate.format_for_record(judgment) if judgment else None,
+        })
+
     def read_body(self):
         try:
             length = int(self.headers.get("Content-Length", 0))
@@ -1746,6 +1821,11 @@ Then
                 "path": out_path,
                 "artifact_type": artifact_type
             })
+
+        elif path == "/adjudicate":
+            # F24: ask the configured agent whether a pasted artifact meets
+            # this lens's clarity bar, and record the answer.
+            self.handle_adjudicate()
 
         elif path == "/verify":
             body = self.read_body()
