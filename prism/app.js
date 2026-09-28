@@ -298,6 +298,13 @@ async function renderDesk(area) {
   _status = lensData;
   updateBadges(lensData);
 
+  // F23: the per-lens clarity bars. Read here so the Crafting Table can show
+  // what the agent will be held to BEFORE the human commits to a lens. A
+  // failure is non-fatal — the panel simply does not render, and the prompts
+  // fall back to the skills' stated defaults.
+  const thrMeta = await _wfLoadThresholds(true);
+  const thrInfo = thrMeta ? thrMeta.thresholds : null;
+
   // Paused sessions to resume (machine prepares; human steers — GN-009)
   let pausedRows = '';
   const pauses = lensData.paused || [];
@@ -363,6 +370,40 @@ async function renderDesk(area) {
       <span style="font-size:11.5px;color:var(--text-secondary);font-weight:400">${d.hint}</span>
     </button>`).join('');
 
+  // F23: the clarity bar, shown before the human commits to a lens. The
+  // threshold is stated in the prompt regardless, but a control the human has
+  // never seen is a control they will never change — and the whole point is
+  // that this is THEIR decision, per lens. Editing happens in the vault file
+  // (one source of truth); this reads it and says where.
+  // thrInfo is a MAP keyed by lens, so Object.entries, not .map. Getting this
+  // wrong is a total render failure rather than a missing panel, because
+  // renderDesk builds its whole innerHTML in one template.
+  const thrRows = Object.entries(thrInfo || {}).map(([lens, info]) => {
+      const configured = info.source === 'config';
+      return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0">
+        <span style="font-size:12px;color:var(--text-secondary);min-width:132px">
+          ${lens.replace(/-default$/, '')}</span>
+        <span style="font-size:12.5px;font-weight:600;min-width:44px">${info.threshold}%</span>
+        <span style="font-size:11px;color:var(--text-secondary)">
+          ${configured ? 'set by you' : 'Prism default'}</span>
+      </div>`;
+    }).join('');
+  const thresholdPanel = thrRows ? `
+    <details style="margin-top:12px">
+      <summary class="form-label" style="font-size:12px;cursor:pointer">
+        Clarity bar (confidence threshold) — the agent stops asking at this level
+      </summary>
+      <div style="margin-top:8px;padding:10px 12px;border:1px solid var(--border);border-radius:8px">
+        ${thrRows}
+        <div style="font-size:11.5px;color:var(--text-secondary);margin-top:9px;line-height:1.5">
+          You set this per lens, before each interview. Higher means more questions
+          before any output; 100% means "ask me about everything".<br>
+          Change it in <code>${escHtml((thrMeta && thrMeta.path) || 'knowledge/process/confidence-thresholds.md')}</code> —
+          takes effect the next time you start a lens.
+        </div>
+      </div>
+    </details>` : '';
+
   area.innerHTML = `
     <div style="max-width:720px">
       <div style="margin-bottom:18px">
@@ -404,6 +445,7 @@ async function renderDesk(area) {
 
         <div class="form-label" style="margin-top:18px;margin-bottom:8px">Route it through a lens:</div>
         <div class="desk-doors" id="desk-doors">${lensDoors}</div>
+        ${thresholdPanel}
 
         <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
           <button class="btn btn-ghost btn-sm" onclick="deskStageOnly()"
@@ -1629,6 +1671,91 @@ function _chatAutoResize(el) {
   el.style.height = Math.min(el.scrollHeight, 120) + 'px';
 }
 
+// ── F23: the confidence threshold ──────────────────────────────────────────
+//
+// The bar is the agent's judgment, not a computation — but WHICH bar is the
+// human's decision, and it has to be stated in the prompt to be real. An
+// agent mid-interview will not open a config file, and a threshold that is
+// merely documented is a threshold that is quietly ignored.
+//
+// The block text is built server-side (/threshold-block) so there is exactly
+// one copy. Restating it in app.js is how F9's three ingest paths diverged.
+let _thresholdCache = {};   // lens -> block string
+let _thresholdMeta = null;  // {default,min,max,path,thresholds}
+
+async function _wfLoadThresholds(force) {
+  if (!force && _thresholdMeta) return _thresholdMeta;
+  try {
+    _thresholdMeta = await apiGet('/thresholds');
+  } catch (e) {
+    // No thresholds endpoint (older server): the prompts simply carry no
+    // threshold block and the agent falls back to the skill's stated default.
+    // That is the pre-F23 behaviour and it is safe.
+    _thresholdMeta = null;
+  }
+  return _thresholdMeta;
+}
+
+// The block to splice into a prompt, or '' when unavailable. Never throws: a
+// missing threshold must degrade to the old behaviour, not break the workflow.
+async function _wfThresholdBlock(lens) {
+  if (_thresholdCache[lens] !== undefined) return _thresholdCache[lens];
+  try {
+    const r = await apiGet('/threshold-block?lens=' + encodeURIComponent(lens));
+    _thresholdCache[lens] = r.block || '';
+  } catch (e) {
+    _thresholdCache[lens] = '';
+  }
+  return _thresholdCache[lens];
+}
+
+function _wfThresholdValue(lens) {
+  const t = _thresholdMeta && _thresholdMeta.thresholds && _thresholdMeta.thresholds[lens];
+  return t ? t.threshold : (_thresholdMeta ? _thresholdMeta.default : 95);
+}
+
+// F23: splice the threshold into a built prompt, in ONE place.
+//
+// There are eight prompt builders across the four runners. Editing each one
+// to append a threshold is exactly the drift F9 fixed in the ingest paths:
+// the sixth builder gets forgotten, or gets a differently-worded block, and
+// the agent receives two different instructions about the same bar. So the
+// builders stay untouched and every prompt goes through here on its way to
+// the message.
+//
+// `_chat.workflowId` is the lens; the block is empty when the server has no
+// thresholds, which degrades to the pre-F23 behaviour rather than breaking.
+function _wfWithThreshold(promptText) {
+  const lens = _chat.workflowId;
+  if (!lens) return promptText;
+  const block = _thresholdCache[lens];
+  if (!block) return promptText;
+  // After the skill pointer, which is where the agent finishes reading setup
+  // and starts being told what to do.
+  return `${promptText}\n\n${block}`;
+}
+
+// ── F23: prompt builders are wrapped once, here ────────────────────────────
+//
+// Each real builder above is renamed to *Raw and exposed under its original
+// name by a wrapper that appends this lens's confidence threshold. That is
+// the whole mechanism, and it is here rather than at each of the eighteen
+// places a codeBlock is attached because eighteen call sites is eighteen
+// chances to forget one — the F9 pattern, in a new costume.
+//
+// A builder called before the thresholds have loaded returns its text
+// unchanged, which is exactly the pre-F23 behaviour. The gate is not load-
+// bearing on the fetch succeeding.
+
+const _wfReqPrdGatePrompt = (...a) => _wfWithThreshold(_wfReqPrdGatePromptRaw(...a));
+const _wfReqIntentSynthPrompt = (...a) => _wfWithThreshold(_wfReqIntentSynthPromptRaw(...a));
+const _wfRatIntentSynthPrompt = (...a) => _wfWithThreshold(_wfRatIntentSynthPromptRaw(...a));
+const _wfRatConvSynthPrompt = (...a) => _wfWithThreshold(_wfRatConvSynthPromptRaw(...a));
+const _wfRatStructurePrompt = (...a) => _wfWithThreshold(_wfRatStructurePromptRaw(...a));
+const _wfHypGatePrompt = (...a) => _wfWithThreshold(_wfHypGatePromptRaw(...a));
+const _wfHypDocSynthPrompt = (...a) => _wfWithThreshold(_wfHypDocSynthPromptRaw(...a));
+const _wfUxBridgePrompt = (...a) => _wfWithThreshold(_wfUxBridgePromptRaw(...a));
+
 // ── Staging area door handlers (lenscraft/05-delivery-channels.md) ─────────
 
 function _stageEdit(idx, el) {
@@ -1808,6 +1935,13 @@ function _chatAgentSay(text, html) {
 // ── Requirements Default Workflow Runner ────────────────────────────────────
 
 async function _wfReqInit() {
+  // F23: load this lens's threshold BEFORE any prompt is built, so the very
+  // first prompt already carries the bar. The builder wrapper reads a cache,
+  // and an unfilled cache produces no block — which would make the setting
+  // apply from the second turn onwards instead of the first.
+  await _wfLoadThresholds();
+  await _wfThresholdBlock(_chat.workflowId);
+
   // F3: shared resume — replays the real session and restores the paused step
   if (await _wfResumeFromPause()) return;
 
@@ -1993,10 +2127,10 @@ async function wfOptD() {
 // wfOptE removed with its button (F8) — the integration door does not exist
 // until an integration is configured; see vault/knowledge/integrations/.
 
-function _wfReqPrdGatePrompt(path, name, content) {
+function _wfReqPrdGatePromptRaw(path, name, content) {
   return `ARTIFACT TYPE:    formatted\nARTIFACT PATH:    ${path}\nREQUIREMENT NAME: ${name}\nSEED CONTENT:\n---\n${content}\n---\n\nSkill: vault/knowledge/resources/skills/prd-gate.md`;
 }
-function _wfReqIntentSynthPrompt(path, type, content) {
+function _wfReqIntentSynthPromptRaw(path, type, content) {
   return `ARTIFACT TYPE:    ${type}\nARTIFACT PATH:    ${path}\nLENS NAME:        Requirement\nSEED WORD:        Genesis\nRAW CONTENT:\n---\n${content}\n---\n\nSkill: vault/knowledge/resources/skills/intent-synth.md`;
 }
 
@@ -2004,6 +2138,12 @@ function _wfReqIntentSynthPrompt(path, type, content) {
 // ── Rationalizations Default Workflow Runner ────────────────────────────────
 
 async function _wfRatInit() {
+  // F23: load this lens's threshold before any prompt is built, so the very
+  // first prompt already carries the bar. An unfilled cache produces no
+  // block, which would make the setting apply from the second turn onward.
+  await _wfLoadThresholds();
+  await _wfThresholdBlock(_chat.workflowId);
+
   console.log('[_wfRatInit] starting, artifactPath:', _chat.artifactPath, 'gibberishPath:', _chat.gibberishPath);
   // F3: shared resume — rationalizations previously ignored the pause file
   // entirely (every resume re-ran routing from scratch). Now it replays.
@@ -2107,13 +2247,13 @@ function _wfRatPostProcessMsg() {
   return `✅ Synthesis output received. Choose how to proceed:\n\nUse the action buttons below to continue.`;
 }
 
-function _wfRatIntentSynthPrompt(path, type, content) {
+function _wfRatIntentSynthPromptRaw(path, type, content) {
   return `ARTIFACT TYPE:    ${type}\nARTIFACT PATH:    ${path}\nLENS NAME:        Rationalization\nSEED WORD:        Gibberish\nRAW CONTENT:\n---\n${content}\n---\n\nSkill: vault/knowledge/resources/skills/intent-synth.md`;
 }
-function _wfRatConvSynthPrompt(path, type, content) {
+function _wfRatConvSynthPromptRaw(path, type, content) {
   return `ARTIFACT TYPE:    ${type}\nARTIFACT PATH:    ${path}\nLENS NAME:        Rationalization\nSEED WORD:        Gibberish\nRAW CONTENT:\n---\n${content}\n---\n\nSkill: vault/knowledge/resources/skills/conv-synth.md`;
 }
-function _wfRatStructurePrompt(path, name, content) {
+function _wfRatStructurePromptRaw(path, name, content) {
   return `ARTIFACT TYPE:    formatted\nARTIFACT PATH:    ${path}\nRATIONALIZATION NAME: ${name}\nSEED CONTENT:\n---\n${content}\n---\n\nTask: Structure this formatted content into a complete Structured Account with the following sections: Context, Reasoning, Constraints, Trade-offs Accepted, Secondary Considerations, Revisit Trigger.`;
 }
 
@@ -2125,6 +2265,12 @@ function _wfRatStructurePrompt(path, name, content) {
 // Output: a hypothesis brief (Framework C) written into the lens file.
 
 async function _wfHypInit() {
+  // F23: load this lens's threshold before any prompt is built, so the very
+  // first prompt already carries the bar. An unfilled cache produces no
+  // block, which would make the setting apply from the second turn onward.
+  await _wfLoadThresholds();
+  await _wfThresholdBlock(_chat.workflowId);
+
   // F3: shared resume (previously only post-processing was restored)
   if (await _wfResumeFromPause()) return;
 
@@ -2206,11 +2352,11 @@ function _wfHypPostProcessMsg() {
   return `✅ Hypothesis brief received and written into the lens file (status: review). Choose how to proceed:\n\nUse the action buttons below to continue.`;
 }
 
-function _wfHypGatePrompt(path, name, content) {
+function _wfHypGatePromptRaw(path, name, content) {
   return `ARTIFACT TYPE:    formatted\nARTIFACT PATH:    ${path}\nLENS NAME:        Hypothesis\nDOCUMENT NAME:    ${name}\nSEED CONTENT:\n---\n${content}\n---\n\nSkill: vault/knowledge/resources/skills/clarification-gate.md (Framework C — Hypothesis)`;
 }
 
-function _wfHypDocSynthPrompt(path, type, content) {
+function _wfHypDocSynthPromptRaw(path, type, content) {
   return `ARTIFACT TYPE:    ${type}\nARTIFACT PATH:    ${path}\nLENS NAME:        Hypothesis\nSEED WORD:        Epiphany\nRAW CONTENT:\n---\n${content}\n---\n\nSkill: vault/knowledge/resources/skills/doc-synth.md`;
 }
 
@@ -2245,6 +2391,12 @@ const UX_ANSWER_MARK = '## UX Interview (Prism log)';
 const UX_MIN_ANSWER_CHARS = 20;
 
 async function _wfUxInit() {
+  // F23: load this lens's threshold before any prompt is built, so the very
+  // first prompt already carries the bar. An unfilled cache produces no
+  // block, which would make the setting apply from the second turn onward.
+  await _wfLoadThresholds();
+  await _wfThresholdBlock(_chat.workflowId);
+
   // F3: shared resume — replay the real session, restore the paused step.
   if (await _wfResumeFromPause()) return;
 
@@ -2415,7 +2567,7 @@ function _wfUxPostProcessMsg() {
          `no follow-up request should be needed.\n\nChoose how to proceed:`;
 }
 
-function _wfUxBridgePrompt(path, name, content) {
+function _wfUxBridgePromptRaw(path, name, content) {
   // The answer log is appended to the PM description so the agent sees the
   // whole interview, not just the latest turn — the skill's loop is stateful,
   // and a stateless prompt would restart the interview every turn.
@@ -2665,7 +2817,22 @@ async function _wfApplyAccepted(v, userText) {
       'hypothesis-brief': '## Hypothesis brief (agent output, structure verified by Prism)',
       'ux-handoff-spec': '## UX Hand-off Specification (agent output, structure verified by Prism)',
     })[v.shape] || '## Agent output (structure verified by Prism)';
-    await apiPost('/file', { path: lensPath, content: `${updatedHead}\n\n${sectionLabel}\n\n${userText.trim()}\n` });
+
+    // F23: record the bar this artifact was produced under. Months later,
+    // "why is this thinner than the last one?" is answerable from the file
+    // rather than from memory — the threshold is a human decision that varies
+    // per lens and over time, so an artifact without it is unexplainable.
+    const thrLens = _chat.workflowId || '';
+    const thrVal = _wfThresholdValue(thrLens);
+    const thrEntry = _thresholdMeta && _thresholdMeta.thresholds
+      ? _thresholdMeta.thresholds[thrLens] : null;
+    const thrOrigin = thrEntry && thrEntry.source === 'config'
+      ? 'set by the human' : 'Prism default';
+    const thrLine = thrVal
+      ? `\n\n**Confidence threshold:** ${thrVal}% (${thrOrigin} — set before this lens began)`
+      : '';
+
+    await apiPost('/file', { path: lensPath, content: `${updatedHead}\n\n${sectionLabel}${thrLine}\n\n${userText.trim()}\n` });
     toast(isUxSpec
       ? '✓ UX Hand-off Specification written — status set to ux-ready'
       : '✓ Output written into the lens file — status set to review');

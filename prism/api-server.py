@@ -24,6 +24,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from extract import UnsupportedDocument, extract_document  # noqa: E402
 import agentic  # noqa: E402
+import thresholds  # noqa: E402
 
 PORT = 8082
 # Data directory lives next to this script
@@ -1227,7 +1228,34 @@ class PrismHandler(http.server.BaseHTTPRequestHandler):
         path = parsed.path.rstrip("/")
         qs = parse_qs(parsed.query)
 
-        if path == "/agent-configs":
+        if path == "/thresholds":
+            # F23: per-lens confidence thresholds, and the default for a lens
+            # that has never been configured. Read-only — the file is edited
+            # in the vault, so there is exactly one source of truth.
+            self.send_json(200, {
+                "ok": True,
+                "default": thresholds.DEFAULT_THRESHOLD,
+                "min": thresholds.MIN_THRESHOLD,
+                "max": thresholds.MAX_THRESHOLD,
+                "path": thresholds.THRESHOLD_PATH,
+                "thresholds": thresholds.load_thresholds(),
+            })
+
+        elif path == "/threshold-block":
+            # The exact text that goes into a prompt for one lens. Built here
+            # so the string exists in exactly one place: restating it in
+            # app.js is how the F9 drift happened, and a threshold that exists
+            # in two copies is a threshold that will disagree with itself.
+            lens = (qs.get("lens", [""])[0] or "").strip()
+            self.send_json(200, {
+                "ok": True,
+                "lens": lens,
+                "threshold": thresholds.get_threshold(lens),
+                "block": thresholds.threshold_block(lens),
+                "line": thresholds.threshold_line(lens),
+            })
+
+        elif path == "/agent-configs":
             # F22: which agent integrations exist, and which are callable now.
             # `has_key` reports whether the named env var is set WITHOUT ever
             # returning its value — the key itself never leaves the server.
