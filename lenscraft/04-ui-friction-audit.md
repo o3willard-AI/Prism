@@ -705,6 +705,64 @@ process can be confidently green about code that is not running. F21 now
 opens with a freshness probe that stages via `/ingest-document` and asserts
 `/extract-document` does *not*, and says "restart the server if this fails".
 
+### F22 — the agent is a required participant, and the constraint that said otherwise was wrong ✅ resolved 27 Sep 2026
+~~Prism never calls a language model, and this is a design constraint, not a
+missing feature.~~ That sentence appeared in three agent definitions, the
+README ("the lens, not the laser"), and the delivery-channel design, and it
+was **load-bearing in the wrong direction**.
+
+**The error:** the framing described the agent as a *downstream consumer* of
+Prism's output — "whatever one the human already works with". That made
+integration look like a convenience. It is not. **Prism's workflows cannot be
+made deterministic.** UX Bridge asks one question at a time, and *something
+must judge* whether an answer fills the field and whether 95% is reached.
+Prism holds the state, prepares the prompt, and verifies the returned shape —
+but it cannot know whether an answer is any good. No amount of programming
+here substitutes for that judgment, and treating the dependency as forbidden
+meant the most important participant in the system was the one thing
+documented as out of scope.
+
+Worth noting what did **not** change, because it matters more than the
+reversal: **Prism still does not generate the thinking.** It prepares work,
+holds the state machine, and checks the artifact. The judgment stays with the
+agent, integrated or pasted, on identical terms. F15 had already killed every
+doc claiming a "future LLM placeholder" — that instinct was right about
+*pretending*; what was wrong was forbidding the real thing.
+
+**The rule that survives everything: keys never enter the vault.** An
+integration config records the *name* of an environment variable, never its
+value, because `integrations/agentic/` is git-synced and a literal key written
+there would be committed. `agentic.py` enforces this three ways: it rejects
+unknown frontmatter fields loudly, it rejects any field whose name matches
+`api_key|secret|token|password|credential|bearer`, and `auth_env` must match
+`^[A-Z][A-Z0-9_]+$` so a value cannot masquerade as a variable name. An
+`http://` endpoint is also refused — that would put the key on the wire in the
+clear.
+
+**Draft configs cannot be called.** Status is `active | draft | archived`, and
+only `active` invokes. That is what makes it safe to write a config without
+accidentally spending money, and it means the "Send to agent" door can be
+present-and-honest rather than present-and-broken.
+
+**Every call is recorded before it is sent**, not after it returns. If the call
+hangs, gets killed, or the server dies mid-flight, the attempt is still in
+`ingestion/agent-calls/`. That ordering is deliberate: reconciling a bill
+means knowing what was *attempted*, and the reverse ordering loses exactly the
+entries you would need.
+
+**The delivery default flipped.** "Save as file" was the secondary door and
+copy was primary, which made the human the courier for every prompt and left
+`vault/prompts/` empty — the one channel an agent can walk on its own. Filing
+is now the primary door ("💾 File it — agent-ready"), copy is the quieter
+secondary, and channel 3 appears when an integration is active *and* has a key
+present. Two door kinds (file vs send) for the same artifact would have been
+the F9 drift trap, so the send door lives in the same row.
+
+**Integration changes WHERE the work goes, not what Prism does with it.** An
+integrated reply is pushed as a normal `role: 'agent'` message, so it goes
+through the same F2 shape verification, the same `ux-ready` emission, the same
+downstream steps as a pasted one. There is no privileged path.
+
 ---
 
 ## The pattern in both columns

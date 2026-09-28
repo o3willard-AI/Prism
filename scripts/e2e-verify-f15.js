@@ -98,8 +98,20 @@ const read = (p) => fs.readFileSync(p, 'utf8');
     check(`${a}: no Option E handoff row`, !/^\|\s*Option E selected/m.test(t));
     check(`${a}: no "Option A or E" phrasing`, !/Option A or E|Option A or Option E/.test(t));
     check(`${a}: no stale LLM roadmap line`, !/Future: wire real LLM API calls/.test(t));
-    check(`${a}: states the no-LLM constraint`,
-          /never calls a language model/.test(t));
+    // F22 replaced the old premise. The agent is now a REQUIRED participant
+    // and Prism does call a configured integration, so "never calls a language
+    // model" is false. What must still hold is the part that was always the
+    // point: Prism does not generate the thinking itself, and a key is never
+    // stored in the vault. Asserting THAT keeps the check meaningful instead
+    // of deleting it.
+    check(`${a}: does not claim Prism never calls an agent (F22)`,
+          !/never calls a language model/.test(t));
+    check(`${a}: states the agent is a required participant`,
+          /required participant|required: no amount of/i.test(t));
+    check(`${a}: says Prism does not generate the thinking itself`,
+          /never generates the thinking/i.test(t));
+    check(`${a}: states keys are never stored in the vault`,
+          /never stored in the vault|never enter the vault/i.test(t));
   }
 
   // ── 3. Workflow READMEs ────────────────────────────────────────────────
@@ -155,8 +167,26 @@ const read = (p) => fs.readFileSync(p, 'utf8');
       else if (e.name !== 'README.md') configs.push(path.relative(integ, fp));
     }
   })(integ);
-  check('integrations/ holds no configured services (E absent legitimately)',
-        configs.length === 0, 'found: ' + configs.join(', '));
+  // F22 replaced this premise too. The point of the original check was that
+  // the E door must not appear unless a service REALLY exists — a
+  // present-and-broken door is worse than none. That intent still holds, so
+  // instead of "no configs at all" this asserts: a config may exist, but it
+  // must not be marked active, and the E door must still be absent. The
+  // example config ships as a draft for exactly this reason.
+  const active = configs.filter(f =>
+    /\*\*Status:\*\*\s*active/i.test(
+      fs.readFileSync(path.join(VAULT, 'knowledge', 'integrations', f), 'utf8')));
+  check('integrations/ holds no ACTIVE service (the E door stays absent)',
+        active.length === 0, 'active: ' + active.join(', '));
+  check('any shipped integration config is a draft, not armed',
+        configs.every(f => !active.includes(f)), configs.join(', '));
+  check('no integration config may contain a literal key',
+        configs.every(f => {
+          const t = fs.readFileSync(path.join(VAULT, 'knowledge', 'integrations', f), 'utf8');
+          return !/\*\*(api[_-]?key|secret|token|password)\*\*\s*:\s*\S/i.test(t);
+        }),
+        configs.filter(f => /\*\*(api[_-]?key|secret|token|password)\*\*\s*:\s*\S/i.test(
+          fs.readFileSync(path.join(VAULT, 'knowledge', 'integrations', f), 'utf8'))).join(', '));
 
   console.log(`\n${pass}/${pass + fail} checks passed`);
   if (fail) { console.log(`${fail} FAILED`); process.exit(1); }

@@ -11,6 +11,7 @@ import os
 import re
 import socketserver
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
@@ -22,6 +23,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 # repo root and from prism/ behave differently.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from extract import UnsupportedDocument, extract_document  # noqa: E402
+import agentic  # noqa: E402
 
 PORT = 8082
 # Data directory lives next to this script
@@ -1140,6 +1142,78 @@ class PrismHandler(http.server.BaseHTTPRequestHandler):
 
         self.send_json(200, {**result, "path": rel_path, "type": artifact_type})
 
+    def handle_agent_invoke(self):
+        """F22: send a prepared prompt to a configured agent integration.
+
+        Every call is recorded in the vault before the request goes out, not
+        after it returns. That ordering is deliberate: if the call hangs, is
+        killed, or the server dies mid-flight, there is still a record that it
+        was attempted — which is the fact you would want when reconciling a
+        subscription bill.
+        """
+        body = self.read_body()
+        if not body:
+            return self.send_error_json(400, "Invalid JSON")
+        rel = (body.get("agent") or "").strip()
+        prompt = (body.get("prompt") or "").strip()
+        if not rel:
+            return self.send_error_json(400, "No agent integration named.")
+        if not prompt:
+            return self.send_error_json(400, "No prompt to send.")
+
+        try:
+            cfg = agentic.load_config(rel)
+        except agentic.AgentConfigError as exc:
+            return self.send_error_json(400, str(exc))
+
+        # Record the attempt BEFORE calling, so an interrupted call is still
+        # visible in the ledger.
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        safe = re.sub(r"[^\w\-]", "-", cfg["name"].lower())[:40].strip("-") or "agent"
+        log_rel = f"ingestion/agent-calls/{date_str}-{safe}-{int(time.time())}.md"
+        started = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        write_file(log_rel, f"""# Agent call — {cfg['title']}
+
+**Agent:** {cfg['name']}
+**Started:** {started}
+**Status:** in progress
+
+---
+
+{prompt}
+""")
+
+        try:
+            result = agentic.invoke(cfg, prompt)
+        except agentic.AgentConfigError as exc:
+            # 502: Prism reached the endpoint and it refused or failed. The
+            # message is the human's next action.
+            return self.send_error_json(502, str(exc))
+
+        # Close the ledger entry with what came back.
+        try:
+            with (DATA_ROOT / log_rel).open("a", encoding="utf-8") as fh:
+                fh.write(
+                    f"\n---\n\n**Status:** completed  \n"
+                    f"**Elapsed:** {result['elapsed_ms']} ms  \n"
+                    f"**Model:** {result['model'] or '—'}\n\n"
+                    f"## Response\n\n{result['text']}\n"
+                )
+        except OSError:
+            # The call succeeded and the ledger append is best-effort; losing
+            # the transcript must not turn a good result into an error.
+            pass
+
+        self.send_json(200, {
+            "ok": True,
+            "text": result["text"],
+            "model": result["model"],
+            "elapsed_ms": result["elapsed_ms"],
+            "request_id": result["request_id"],
+            "usage": result["usage"],
+            "log_path": log_rel,
+        })
+
     def read_body(self):
         try:
             length = int(self.headers.get("Content-Length", 0))
@@ -1153,7 +1227,13 @@ class PrismHandler(http.server.BaseHTTPRequestHandler):
         path = parsed.path.rstrip("/")
         qs = parse_qs(parsed.query)
 
-        if path == "/tree":
+        if path == "/agent-configs":
+            # F22: which agent integrations exist, and which are callable now.
+            # `has_key` reports whether the named env var is set WITHOUT ever
+            # returning its value — the key itself never leaves the server.
+            self.send_json(200, {"ok": True, "agents": agentic.list_configs()})
+
+        elif path == "/tree":
             self.send_json(200, build_tree(DATA_ROOT, DATA_ROOT))
 
         elif path == "/file":
@@ -1675,6 +1755,15 @@ Then
                 return self.send_error_json(400, "Invalid JSON")
             code, resp = set_method_status(body)
             self.send_json(code, resp)
+
+        elif path == "/agent-configs":
+            # F22: which agent integrations exist, and which are callable now.
+            # `has_key` reports whether the named env var is set WITHOUT ever
+            # returning its value.
+            self.send_json(200, {"ok": True, "agents": agentic.list_configs()})
+
+        elif path == "/agent-invoke":
+            self.handle_agent_invoke()
 
         elif path == "/prompt":
             # File a prepared prompt into vault/prompts/ (delivery channel 2:

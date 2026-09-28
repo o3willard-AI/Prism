@@ -1519,6 +1519,10 @@ function _chatRender(area) {
       </div>
     </div>`;
   _chatScrollBottom();
+  // F22: resolve which agent integrations are callable, so the Send-to-agent
+  // door is present the first time a prompt is rendered rather than needing a
+  // re-render. Fire-and-forget: a failure here must not block the thread.
+  _wfEnsureAgentTargets();
 }
 
 function _chatBubbleHtml(msg, idx) {
@@ -1537,21 +1541,47 @@ function _chatBubbleHtml(msg, idx) {
 
   // Staging area: prepared prompt, editable, with a door row.
   // Delivery channels — see lenscraft/05-delivery-channels.md:
-  //   Copy (channel 1) · Save as file -> vault/prompts/ (channel 2) ·
-  //   Send-to-X appears only when a service is configured (channel 3).
+  //   File it (channel 2, DEFAULT) · Copy (channel 1) ·
+  //   Send to agent (channel 3) — appears when an integration is configured.
+  //
+  // F22 made filing the DEFAULT. Copy-paste was always available and always
+  // worked, but it made the human the courier for every prompt, and it left
+  // vault/prompts/ empty — the one path an agent can actually read on its own.
+  // The agent is a required participant in every workflow (see README), so
+  // the door that hands it work without a human carrying it is the one that
+  // should be easiest to walk through.
   let codeHtml = '';
   if (msg.codeBlock) {
-    const doors = [
-      `<button class="wf-door" id="wf-stage-copy-${idx}" onclick="_stageCopy(${idx})">📋 Copy</button>`,
-    ];
+    const doors = [];
     if (msg.stageSavedPath) {
       doors.push(
         `<span class="wf-stage-saved">✓ vault/${escHtml(msg.stageSavedPath)}</span>`,
         `<button class="wf-stage-open" onclick="_stageOpen(${idx})">open</button>`
       );
     } else {
+      // Primary: file it. Labeled as the default so the choice is visible.
       doors.push(
-        `<button class="wf-door" id="wf-stage-save-${idx}" onclick="_stageSave(${idx})">💾 Save as file</button>`
+        `<button class="wf-door wf-door-primary" id="wf-stage-save-${idx}" onclick="_stageSave(${idx})">💾 File it — agent-ready</button>`
+      );
+    }
+    doors.push(
+      `<button class="wf-door" id="wf-stage-copy-${idx}" onclick="_stageCopy(${idx})">📋 Copy</button>`
+    );
+    // Channel 3: only when an integration is actually configured AND has a key.
+    // A door that cannot open is worse than no door (F8, GN-006).
+    //
+    // Read from the module-level cache rather than being attached to each
+    // message at every one of the ~10 places a prompt is prepared — that is
+    // exactly the drift F9 came to fix, and the cache is already refreshed
+    // by _wfEnsureAgentTargets() below.
+    const targets = _agentTargets || [];
+    if (targets.length) {
+      const opts = targets
+        .map(a => `<option value="${escHtml(a.path)}">${escHtml(a.title)}</option>`)
+        .join('');
+      doors.push(
+        `<select class="wf-agent-pick" id="wf-stage-agent-${idx}" onchange="_stageSendToAgent(${idx}, this.value)">` +
+        `<option value="">🤖 Send to agent…</option>` + opts + `</select>`
       );
     }
     codeHtml = `
@@ -1648,6 +1678,89 @@ function _stageOpen(idx) {
   // Point at the filed prompt in the file viewer.
   const msg = _chat.messages[idx];
   if (msg && msg.stageSavedPath) openFile(msg.stageSavedPath, 'content-area');
+}
+
+// ── F22: channel 3 — send a prepared prompt to a configured agent ──────────
+//
+// The agent is a REQUIRED participant in every workflow, not an optional
+// convenience. UX Bridge cannot proceed without something judging whether an
+// answer fills a field; Prism holds the state and prompts the turn, and the
+// agent supplies the judgment. Channel 1 (copy) and channel 2 (file) both
+// leave the human carrying light by hand. This door does not.
+
+// Which integrations can actually be called right now: active, with a key
+// present in the environment. Cached briefly because this is fetched on every
+// prepared prompt and a key lookup is a syscall.
+let _agentTargets = null;
+let _agentTargetsAt = 0;
+
+async function _wfLoadAgentTargets(force) {
+  if (!force && _agentTargets && (Date.now() - _agentTargetsAt) < 30000) {
+    return _agentTargets;
+  }
+  try {
+    const r = await apiGet('/agent-configs');
+    _agentTargets = (r.agents || []).filter(a =>
+      a.status === 'active' && a.has_key && !a.error
+    );
+  } catch (e) {
+    // No integrations, or the endpoint is unavailable: the door simply does
+    // not appear. This is a normal state, not an error to shout about.
+    _agentTargets = [];
+  }
+  _agentTargetsAt = Date.now();
+  return _agentTargets;
+}
+
+// Refresh the integration list and re-render, so the door appears or
+// disappears as soon as a config changes. Called once when a workflow starts
+// and whenever a prepared prompt is first shown.
+async function _wfEnsureAgentTargets() {
+  await _wfLoadAgentTargets(true);
+  const t = document.getElementById('wf-thread');
+  if (t) { t.innerHTML = _chat.messages.map(_chatBubbleHtml).join(''); _chatScrollBottom(); }
+}
+
+async function _stageSendToAgent(idx, agentPath) {
+  const msg = _chat.messages[idx];
+  const sel = document.getElementById('wf-stage-agent-' + idx);
+  if (!msg || !agentPath) {
+    if (sel) sel.value = '';
+    return;
+  }
+  // Reset the picker immediately so the same agent can be chosen again.
+  if (sel) sel.value = '';
+
+  const agent = (msg.agentTargets || []).find(a => a.path === agentPath);
+  const label = agent ? agent.title : 'the agent';
+
+  const status = document.createElement('div');
+  status.className = 'wf-agent-status';
+  status.textContent = '⏳ Sending to ' + label + '…';
+  const row = sel ? sel.parentElement : null;
+  if (row) row.appendChild(status);
+
+  try {
+    const r = await apiPost('/agent-invoke', {
+      agent: agentPath,
+      prompt: msg.codeBlock,
+    });
+    // The reply lands as a normal agent message. Prism treats an integrated
+    // agent exactly as it always treated a pasted one — same thread, same
+    // verification, same downstream steps. Integration changes WHERE the work
+    // goes, not what Prism does with the answer.
+    _chat.messages.push({ role: 'agent', text: r.text, from: agent ? agent.title : 'agent' });
+    _chatScheduleSave();
+    const t = document.getElementById('wf-thread');
+    if (t) { t.innerHTML = _chat.messages.map(_chatBubbleHtml).join(''); _chatScrollBottom(); }
+    toast('✅ ' + label + ' replied in ' + r.elapsed_ms + ' ms — logged to ' + r.log_path);
+  } catch (e) {
+    // The server's message is the actionable one ("no API key — set X and
+    // restart", "HTTP 401", "could not reach"). Show it as-is.
+    toast(e.message, true);
+  } finally {
+    if (status && status.parentElement) status.parentElement.removeChild(status);
+  }
 }
 
 function _chatSend() {

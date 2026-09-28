@@ -8,20 +8,57 @@ wavelengths that are emitted exactly where they are needed.
 
 Prism does the same for human thought. It takes raw human communication —
 dictation, brain dumps, meeting transcripts, half-formed intentions, chat
-logs — and refines it into **actionable, reusable context optimized for
-agentic comprehension and extension**.
+logs, and documents you already have — and refines it into **actionable,
+reusable context optimized for agentic comprehension and extension**.
 
 Prism is deliberately **not**:
 
-- an agent harness or orchestrator
-- a storage system or knowledge base product
-- a memory layer, agent swarm, or automation loop
+- a place where thought is stored and forgotten
+- a chat interface pretending to be a thinking partner
+- a substitute for the judgment that a thinking partner actually provides
 
-It is a **refraction tool**. Humans bring scattered thought in; focused
-context comes out. The consumer of that output is typically an AI agent —
-whatever one the human already works with. Prism generates the prompts,
-the human's agent does the generation, and the result is captured back.
-Prism is the lens, not the laser.
+It is a **refraction tool**: humans bring scattered thought in; focused context
+comes out, and an **agent works with you to produce it**.
+
+## The agent is a required participant
+
+**This is the load-bearing fact about Prism, and it used to be stated
+backwards.** Prism's workflows are not deterministic, and no amount of
+programming here makes them so. UX Bridge asks the PM one question at a time
+and *something has to judge* whether an answer actually fills the field, and
+whether 95% is reached. Prism can hold the state, prepare the prompt, and
+verify the shape of what comes back — but it cannot know whether an answer is
+any good. That judgment is the agent's, and it is not optional.
+
+So the agent is **not a downstream consumer** of Prism's output. It is a
+participant in producing it. Prism is the lens; the agent supplies the
+judgment that makes refraction meaningful.
+
+This is why Prism can stay honest about its own limits while integrating
+directly: it never *becomes* the thinking partner. It prepares the work,
+holds the state machine, and checks the artifact. The judgment stays with the
+agent — integrated, and on the same terms as a pasted one.
+
+## Getting light to the agent
+
+Three channels, all real (see `lenscraft/05-delivery-channels.md`):
+
+| Channel | Mechanism | When |
+|---|---|---|
+| **File it** | prompt written to `vault/prompts/`; the agent reads it | **The default** — no human carrying text |
+| **Send to agent** | direct API call to a configured integration | When an integration is set up and has a key |
+| **Copy** | clipboard → paste | Always available; the door that can never be bricked |
+
+Filing is the default because copy-paste made the human the courier for every
+prompt, and left `vault/prompts/` empty — the one path an agent can walk on
+its own. The agent is required, so the door that hands it work without a
+human carrying it should be the easiest to walk through.
+
+**Keys never enter the vault.** An integration config records the *name* of an
+environment variable, never its value — the folder is git-synced, so a literal
+key written there would be committed. Every agent call is recorded in
+`ingestion/agent-calls/` **before** the request is sent, so an interrupted
+call is still on record.
 
 ---
 
