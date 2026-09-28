@@ -848,6 +848,76 @@ totals below, and it is worth fixing rather than carrying: the suite depends
 on a live server and appears to be racing one. Same shape as the known F19
 `sleep(1200)` race.
 
+### F24 — the agent judges clarity; the regex gate stops pretending to ✅ pending review 28 Sep 2026
+~~`ratio >= 0.8` over marker patterns is a 95% clarity gate.~~ It was not.
+One of those markers was the agent's own claim that it had reached 95%, so
+Prism was matching a *claim* about a judgment and calling the result a gate.
+I verified the hole directly: a PRD that wrote `## Executive Summary` and
+then `TBD` seven times came back `match`; a complete, well-reasoned PRD that
+said "Scope" instead of "Executive Summary" came back `unrecognized`.
+
+**Three answers, and all three matter:**
+
+- `at_threshold` — clear. Advance, and record the number *and the reasoning*
+  so the artifact explains itself later.
+- `below_threshold` — short, and **the agent derives the specific questions**
+  that would close the gap. This is the half that was missing. Without it,
+  "below threshold" is a dead end: Prism would know the output is inadequate
+  and have no route to an adequate one, which is worse than not checking.
+- `uncertain` — the agent cannot judge. A legitimate answer, not a failure.
+  It routes to the human rather than guessing, because overstating confidence
+  is exactly how the old gate lied.
+
+**The structural check is demoted, not deleted.** Per Principle 4 of the gate
+document it is a floor: it catches a structural accident, it is reported as
+context, and it can never approve anything. A suite check asserts the floor
+cannot set the verdict, verified by making it try — 3 checks fail.
+
+**Two absences kept distinct.** `unjudged` means Prism could not ask anyone
+(no integration, service down, bad key). A judgment of `uncertain` means the
+agent was asked and said it cannot tell. Collapsing them would make a working
+integration look broken and a broken one look like an opinion, so the response
+carries `asked`. An unparseable reply is `uncertain` + `parse_failed`, not
+`unjudged` — we did ask. **I got this wrong first** and my own probe asserted
+the wrong thing; the distinction is worth more than the convenience of one
+label.
+
+**When no agent is configured, Prism says so and does not substitute the
+floor.** The old behaviour looked identical whether or not anyone had judged
+anything, and that indistinguishability was the actual harm — not the ratio
+being wrong, but nobody being able to tell that nothing had been judged.
+
+**A `below_threshold` with no questions is a contradiction.** The agent said
+it is short but named no gap, so the human would be stranded. Demoted to
+`uncertain` with the reason stated.
+
+**The prompt asks for substance, not formatting.** A well-organised document
+missing half the answer is below threshold; a plainly-written one that captures
+the intent is not. It also tells the agent that `uncertain` is legitimate and
+that `below_threshold` must not become a stalling tactic — both are ways an
+agent under pressure talks itself into the wrong answer.
+
+**`scripts/e2e-verify-f24.py` (112 checks)** covers 17 malformed-reply cases
+(fenced JSON, prose-wrapped, nested braces, escaped quotes, unknown verdict,
+`below` with no questions, non-list questions, out-of-range and non-numeric
+confidence, 40 questions capped to 12), the prompt's content, the record
+format, and the live path against a real TLS agent across six failure modes.
+
+Teeth verified on the three dangerous properties: **an unparseable reply
+passing fails 6 checks; the floor approving when nothing judged fails 3;
+dropping the contradiction guard fails 8.**
+
+**An environment lesson worth keeping:** the suite reads its CA from
+`F24_CA_FILE`, not `SSL_CERT_FILE`, because the latter is already set to a
+certifi bundle in this environment — so trusting it made every handshake fail
+while the fake agent was perfectly healthy. A test bug that presented exactly
+like a product bug, which is the F21 stale-server lesson in a new costume.
+
+**Known limitation, stated rather than hidden:** the *default* agent for
+adjudication is the first configured, keyed integration by sorted filename.
+When several exist, which one should judge is a real question this defers. A
+per-lens `judged by` field is the obvious answer and is not built.
+
 ---
 
 ## The pattern in both columns
