@@ -1,5 +1,29 @@
 """F22 agent-integration probe.
 
+SETUP — the suite needs a SERVER started with two environment variables, and
+without them it fails for reasons that look like product bugs:
+
+    export PRISM_TEST_KEY="sk-test-FAKE-not-a-real-key"
+    export SSL_CERT_FILE=/tmp/fake-cert.pem      # trust the fake agent's cert
+    ./scripts/start.sh
+
+`PRISM_TEST_KEY` because agentic.py resolves a key from the *server's*
+environment at call time. Setting it in this process proves nothing — the
+server never sees it, and every "call succeeds" check fails with "No API key
+found", which reads like a broken product rather than a missing test var.
+
+`SSL_CERT_FILE` because the fake agent speaks TLS. agentic.py refuses an
+http:// endpoint — correctly, since that would put the key on the wire in the
+clear — so the suite must trust the fake agent's self-signed cert.
+
+Generate the cert once:
+    openssl req -x509 -newkey rsa:2048 -keyout /tmp/fake-key.pem \\
+        -out /tmp/fake-cert.pem -days 2 -nodes -subj "/CN=127.0.0.1" \\
+        -addext 'subjectAltName=IP:127.0.0.1,DNS:localhost'
+
+If you see "No API key found" or "certificate verify failed" in the output,
+it is this, not the code. A full pass is 41/41.
+
 Each error mode runs on its OWN PORT. Trying to rebind one port between
 modes proved unreliable here: the old process's socket lingered, the next
 mode could not bind, and the test then silently talked to the previous
@@ -7,9 +31,13 @@ mode — so a "401" check was really asserting against a 200. Distinct ports
 remove the whole class of problem.
 """
 import json, os, sys, time, socket, subprocess, urllib.request, urllib.error
+from pathlib import Path
 
-ROOT = '/home/sblanken/workspace/Prism'
-sys.path.insert(0, ROOT + '/prism')
+# Resolve the repo from this file rather than hardcoding a home directory.
+# A hardcoded /home/<user>/ path is why a fresh clone on another machine
+# cannot run this suite at all.
+ROOT = str(Path(__file__).resolve().parent.parent)
+sys.path.insert(0, os.path.join(ROOT, 'prism'))
 
 API = 'http://127.0.0.1:8082'
 AGENT_DIR = ROOT + '/prism/vault/knowledge/integrations/agentic'
@@ -17,6 +45,71 @@ LOG = '/tmp/fake-agent.log'
 BASE_PORT = int(os.environ.get('FAKE_AGENT_PORT', '8100'))
 
 PASS = FAIL = 0
+
+def preflight():
+    """Fail loudly and specifically if the environment is not set up.
+
+    Without this the suite reports a scatter of product-looking failures
+    ("No API key found", "certificate verify failed") for what is actually a
+    missing test variable. That misdiagnosis is expensive: the obvious
+    reaction is to debug agentic.py, which is correct code.
+    """
+    problems = []
+    # 1. Is the server up at all?
+    try:
+        urllib.request.urlopen(API + '/agent-configs', timeout=3).read()
+    except Exception as e:
+        problems.append(
+            f'Prism is not answering on {API} ({e.__class__.__name__}). '
+            f'Start it with ./scripts/start.sh')
+        return problems
+
+    # 2. Does the SERVER have the test key in ITS environment? This suite's
+    #    configs do not exist yet at preflight time, so asking /agent-configs
+    #    whether one names PRISM_TEST_KEY would always say no. Instead, ship
+    #    the example config's env var through the server: create a throwaway
+    #    config, ask, remove it. Checking os.environ HERE would prove nothing
+    #    — the key is read by the server process.
+    probe_rel = 'knowledge/integrations/agentic/preflight-probe.md'
+    probe_abs = os.path.join(AGENT_DIR, 'preflight-probe.md')
+    try:
+        with open(probe_abs, 'w') as fh:
+            fh.write('# preflight probe\n\n**Title:** probe\n**Status:** active\n'
+                     '**Kind:** openai\n**Endpoint:** https://api.example.com/v1\n'
+                     '**Model:** m\n**Auth env:** PRISM_TEST_KEY\n')
+        agents = json.loads(urllib.request.urlopen(
+            API + '/agent-configs', timeout=5).read())['agents']
+        probe = next((a for a in agents if a['path'] == probe_rel), None)
+        if probe is None:
+            problems.append(
+                'The probe config did not appear in /agent-configs — the server '
+                'may be running an older build.')
+        elif not probe.get('has_key'):
+            problems.append(
+                'The Prism SERVER has no PRISM_TEST_KEY in its environment. '
+                'Set it and RESTART the server:\n'
+                '    export PRISM_TEST_KEY="sk-test-FAKE-not-a-real-key"\n'
+                '    export SSL_CERT_FILE=/tmp/fake-cert.pem\n'
+                '    ./scripts/start.sh\n'
+                '(Exporting it after startup does nothing — agentic.py reads '
+                'the key from the server process at call time.)')
+    finally:
+        try:
+            os.remove(probe_abs)
+        except OSError:
+            pass
+
+    # 3. Is the fake agent's cert present and trusted?
+    cert = os.environ.get('SSL_CERT_FILE', '/tmp/fake-cert.pem')
+    if not os.path.exists(cert):
+        problems.append(
+            f'No fake-agent certificate at {cert}. Generate it:\n'
+            "    openssl req -x509 -newkey rsa:2048 -keyout /tmp/fake-key.pem \\\n"
+            "        -out /tmp/fake-cert.pem -days 2 -nodes -subj '/CN=127.0.0.1' \\\n"
+            "        -addext 'subjectAltName=IP:127.0.0.1,DNS:localhost'\n"
+            '    export SSL_CERT_FILE=/tmp/fake-cert.pem   # before starting Prism')
+    return problems
+
 def check(name, cond, detail=''):
     global PASS, FAIL
     if cond:
@@ -68,7 +161,19 @@ def clean():
         if f.startswith('t-'):
             os.remove(os.path.join(AGENT_DIR, f))
 
-os.environ['PRISM_TEST_KEY'] = 'sk-test-FAKE-not-a-real-key'
+# Preflight BEFORE anything else. Failing fast with a setup message beats
+# emitting forty failures that all say "No API key found".
+_problems = preflight()
+if _problems:
+    print('F22 cannot run — the environment is not set up:\n')
+    for p in _problems:
+        print('  * ' + p)
+    print('\nSee the SETUP section at the top of this file.')
+    sys.exit(2)
+
+# Deliberately NOT setting os.environ['PRISM_TEST_KEY'] here. The key is read
+# by the SERVER process, so setting it in this test process achieves nothing
+# and used to disguise the real problem. preflight() asks the server instead.
 clean()
 ok_port = BASE_PORT
 ok = start_agent(ok_port, 'ok')
@@ -91,7 +196,15 @@ try:
                     Model='fake-model', Auth_env='PRISM_TEST_KEY')
     cfg = agentic.load_config(rel)
     check('a valid config loads', cfg['endpoint'].startswith('https://'))
-    check('has_key is true when the env var is set', cfg['has_key'] is True)
+    # has_key is resolved by whoever LOADS the config. In this process that
+    # answer is meaningless — the key lives in the server's environment, and
+    # asserting on a local load used to fail for exactly that reason. Ask the
+    # server, which is the only process whose answer matters.
+    _listed = json.loads(urllib.request.urlopen(API + '/agent-configs', timeout=5).read())['agents']
+    _mine = next((a for a in _listed if a['path'] == rel), None)
+    check('the server reports has_key=true for a config whose env var is set',
+          _mine is not None and _mine.get('has_key') is True,
+          json.dumps(_mine) if _mine else 'not listed')
     check('the key value never appears in the config', 'sk-test' not in json.dumps(cfg))
 
     print('\n== secrets can never be written into a config ==')
