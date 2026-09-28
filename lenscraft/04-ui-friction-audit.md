@@ -763,6 +763,161 @@ integrated reply is pushed as a normal `role: 'agent'` message, so it goes
 through the same F2 shape verification, the same `ux-ready` emission, the same
 downstream steps as a pasted one. There is no privileged path.
 
+## F23 — the confidence threshold becomes the human's decision ✅ resolved 28 Sep 2026
+~~The 95% figure was hardcoded in four places.~~ It lived in `prd-gate.md`,
+`clarification-gate.md`, the requirements/rationalizations/ux agent
+definitions, and the ratio logic — and **could not be changed by the human at
+all.** A fixed 95% serves neither end: trivial work should not demand a full
+interview, and genuinely complex work may need the gate turned *down* or the
+human can never get any output ever.
+
+**Where the value lives:** `knowledge/process/confidence-thresholds.md`, one
+line per lens, in the vault. Not in-chat. A per-chat control is forgotten by
+the next session, explains nothing about why an artifact came out the way it
+did, and is not reviewable when it changes. This file is git-synced, so
+lowering a threshold is a visible, reversible commit — the right weight for a
+decision that changes what kind of work you get out of the system.
+
+**The four shipped values are deliberately not all equal:** requirements 95%,
+ux-bridge 95%, hypotheses 85%, rationalizations 85%. The reasoning is the
+point — a PRD handed to a developer with a misunderstood requirement is
+expensive to discover late, while a hypothesis is *meant* to be cheap to be
+wrong about. Setting them all to 95% would have honoured the letter of the
+original spec and defeated its purpose.
+
+**How the value reaches the agent: it is stated in the prompt, on every turn.**
+Not written to a file the agent might read, and not left in the skill's text —
+an agent mid-interview will not open a config file, and a threshold that is
+merely documented is a threshold that is quietly ignored. The block also
+carries **the human's stated reason**, because a bare number tells the agent
+where the bar is but not what it is for, and without the reason an 85% and a
+95% read as arbitrary. It ends by telling the agent the bar is *not its own
+to raise* — it may say once that it seems wrong, then continue at the level
+set.
+
+**Range: 1–100.** 100 is a legitimate setting meaning "ask me about
+everything," and the system must not argue with it. The floor is 1 because
+anything lower is not a gate, and a gate that cannot block should not be
+offered as a setting. Out-of-range values are **refused, not clamped** — a
+`450` in the config is a typo worth surfacing, and quietly treating it as 100
+would hide it.
+
+**One splice point, not eighteen.** There are eight prompt builders and
+eighteen places a `codeBlock` is attached. Editing each builder to append a
+threshold is the F9 drift pattern in new costume: the sixth builder gets
+forgotten, or gets differently-worded text, and the agent receives two
+different instructions about the same bar. So each builder was renamed to
+`*Raw` and re-exposed under its original name by a wrapper that appends the
+threshold. Every existing call site is untouched, and a ninth builder cannot
+be forgotten. The block text itself is built **server-side**
+(`/threshold-block`) so there is exactly one copy of the wording.
+
+**The Crafting Table shows the bars before the human commits to a lens**, and
+names the file to edit. A control the human has never seen is one they will
+never change, and the whole point is that this is their decision. Editing
+happens in the vault; the panel reads and points.
+
+**Every artifact records the bar it was produced under.** Months later, "why
+is this thinner than the last one?" is answerable from the file rather than
+from memory — the threshold is a human decision that varies per lens and over
+time, so an artifact without it is unexplainable.
+
+**Two bugs found by driving the real UI.** `thrInfo` is a map, not an array,
+so `.map()` threw and the Crafting Table **failed to render at all** — a
+total failure rather than a missing panel, because `renderDesk` builds its
+whole `innerHTML` in one template. And the block initially omitted the human's
+reason entirely: the number arrived, the reasoning did not, which is half a
+feature.
+
+**`scripts/e2e-verify-f23.js` (61 checks)** covers parsing, the legal range,
+validation refusals, the block's wording, the HTTP surface, the one-splice-
+point source posture, and — the part that matters — **a real browser proving
+the value reaches a live prompt.** It edits the config to 60%, 100% and 70%
+and asserts each appears in the corresponding prompt. Teeth verified by
+removing the wrappers from three builders: 6 checks fail, including the live-
+prompt ones, and pass again on restore. Two cleanup assertions guard against a
+suite leaving a test threshold behind in the shipped config, which would
+silently change the next person's run.
+
+### Pre-existing failure found along the way (not caused by F23)
+
+`scripts/e2e-verify.js` fails 7 checks with a `fetch failed` harness error —
+on **clean `main`, with none of the F23 changes applied**, verified by stashing
+them and re-running. So it predates this work. It is not counted in the
+totals below, and it is worth fixing rather than carrying: the suite depends
+on a live server and appears to be racing one. Same shape as the known F19
+`sleep(1200)` race.
+
+### F24 — the agent judges clarity; the regex gate stops pretending to ✅ pending review 28 Sep 2026
+~~`ratio >= 0.8` over marker patterns is a 95% clarity gate.~~ It was not.
+One of those markers was the agent's own claim that it had reached 95%, so
+Prism was matching a *claim* about a judgment and calling the result a gate.
+I verified the hole directly: a PRD that wrote `## Executive Summary` and
+then `TBD` seven times came back `match`; a complete, well-reasoned PRD that
+said "Scope" instead of "Executive Summary" came back `unrecognized`.
+
+**Three answers, and all three matter:**
+
+- `at_threshold` — clear. Advance, and record the number *and the reasoning*
+  so the artifact explains itself later.
+- `below_threshold` — short, and **the agent derives the specific questions**
+  that would close the gap. This is the half that was missing. Without it,
+  "below threshold" is a dead end: Prism would know the output is inadequate
+  and have no route to an adequate one, which is worse than not checking.
+- `uncertain` — the agent cannot judge. A legitimate answer, not a failure.
+  It routes to the human rather than guessing, because overstating confidence
+  is exactly how the old gate lied.
+
+**The structural check is demoted, not deleted.** Per Principle 4 of the gate
+document it is a floor: it catches a structural accident, it is reported as
+context, and it can never approve anything. A suite check asserts the floor
+cannot set the verdict, verified by making it try — 3 checks fail.
+
+**Two absences kept distinct.** `unjudged` means Prism could not ask anyone
+(no integration, service down, bad key). A judgment of `uncertain` means the
+agent was asked and said it cannot tell. Collapsing them would make a working
+integration look broken and a broken one look like an opinion, so the response
+carries `asked`. An unparseable reply is `uncertain` + `parse_failed`, not
+`unjudged` — we did ask. **I got this wrong first** and my own probe asserted
+the wrong thing; the distinction is worth more than the convenience of one
+label.
+
+**When no agent is configured, Prism says so and does not substitute the
+floor.** The old behaviour looked identical whether or not anyone had judged
+anything, and that indistinguishability was the actual harm — not the ratio
+being wrong, but nobody being able to tell that nothing had been judged.
+
+**A `below_threshold` with no questions is a contradiction.** The agent said
+it is short but named no gap, so the human would be stranded. Demoted to
+`uncertain` with the reason stated.
+
+**The prompt asks for substance, not formatting.** A well-organised document
+missing half the answer is below threshold; a plainly-written one that captures
+the intent is not. It also tells the agent that `uncertain` is legitimate and
+that `below_threshold` must not become a stalling tactic — both are ways an
+agent under pressure talks itself into the wrong answer.
+
+**`scripts/e2e-verify-f24.py` (112 checks)** covers 17 malformed-reply cases
+(fenced JSON, prose-wrapped, nested braces, escaped quotes, unknown verdict,
+`below` with no questions, non-list questions, out-of-range and non-numeric
+confidence, 40 questions capped to 12), the prompt's content, the record
+format, and the live path against a real TLS agent across six failure modes.
+
+Teeth verified on the three dangerous properties: **an unparseable reply
+passing fails 6 checks; the floor approving when nothing judged fails 3;
+dropping the contradiction guard fails 8.**
+
+**An environment lesson worth keeping:** the suite reads its CA from
+`F24_CA_FILE`, not `SSL_CERT_FILE`, because the latter is already set to a
+certifi bundle in this environment — so trusting it made every handshake fail
+while the fake agent was perfectly healthy. A test bug that presented exactly
+like a product bug, which is the F21 stale-server lesson in a new costume.
+
+**Known limitation, stated rather than hidden:** the *default* agent for
+adjudication is the first configured, keyed integration by sorted filename.
+When several exist, which one should judge is a real question this defers. A
+per-lens `judged by` field is the obvious answer and is not built.
+
 ---
 
 ## The pattern in both columns
