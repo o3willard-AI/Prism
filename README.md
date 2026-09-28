@@ -144,6 +144,41 @@ UX fields are validated (≥95%), carrying every prior answer forward so the
 interview never restarts. Its finished spec lands in `vault/requirements/` at
 status **`ux-ready`**.
 
+## The clarity bar
+
+Each lens has a **confidence threshold** — the level of clarity the agent must
+reach before it produces a finished artifact instead of asking more questions.
+**The agent judges this.** It is a judgment about whether it understands what
+you actually mean and has enough from you to produce something a downstream
+agent can execute, and no algorithm can compute it. See
+`lenscraft/06-confidence-gate.md`.
+
+What *is* your decision is **where the bar sits**, per lens:
+
+| Lens | Default | Why |
+|---|---|---|
+| `requirements-default` | 95% | A PRD with a misunderstood requirement is expensive to discover late |
+| `hypotheses-default` | 85% | A hypothesis is meant to be cheap to be wrong about |
+| `rationalizations-default` | 85% | A post-hoc account is a hypothesis about the past |
+| `ux-bridge-default` | 95% | Eleven mandatory fields; re-interviewing a UX team is costly |
+
+Change it in **`vault/knowledge/process/confidence-thresholds.md`** — one line
+per lens, with a place to say *why*. It takes effect the next time you start
+that lens; nothing needs restarting. The Crafting Table shows the current
+values before you commit to a lens, and every artifact records the bar it was
+produced under.
+
+**Any value from 1 to 100 is legal.** 100 means "ask me about everything,"
+which is correct for high-stakes work and which the system will not argue
+with. Below 1 would not be a gate, so it is not offered.
+
+Prism states your value in **every prompt**, along with your reason for it. An
+agent mid-interview will not go looking for a config file, and a threshold
+that is merely documented is a threshold that is quietly ignored. The skills
+still say "95%+" as their designed default — that is deliberate, so the spec
+documents the number the system was built around. When the two disagree, the
+prompt wins.
+
 ## The one door
 
 The **Crafting Table** is the only entry point. Paste or drop raw thought,

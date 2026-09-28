@@ -763,6 +763,91 @@ integrated reply is pushed as a normal `role: 'agent'` message, so it goes
 through the same F2 shape verification, the same `ux-ready` emission, the same
 downstream steps as a pasted one. There is no privileged path.
 
+## F23 — the confidence threshold becomes the human's decision ✅ resolved 28 Sep 2026
+~~The 95% figure was hardcoded in four places.~~ It lived in `prd-gate.md`,
+`clarification-gate.md`, the requirements/rationalizations/ux agent
+definitions, and the ratio logic — and **could not be changed by the human at
+all.** A fixed 95% serves neither end: trivial work should not demand a full
+interview, and genuinely complex work may need the gate turned *down* or the
+human can never get any output ever.
+
+**Where the value lives:** `knowledge/process/confidence-thresholds.md`, one
+line per lens, in the vault. Not in-chat. A per-chat control is forgotten by
+the next session, explains nothing about why an artifact came out the way it
+did, and is not reviewable when it changes. This file is git-synced, so
+lowering a threshold is a visible, reversible commit — the right weight for a
+decision that changes what kind of work you get out of the system.
+
+**The four shipped values are deliberately not all equal:** requirements 95%,
+ux-bridge 95%, hypotheses 85%, rationalizations 85%. The reasoning is the
+point — a PRD handed to a developer with a misunderstood requirement is
+expensive to discover late, while a hypothesis is *meant* to be cheap to be
+wrong about. Setting them all to 95% would have honoured the letter of the
+original spec and defeated its purpose.
+
+**How the value reaches the agent: it is stated in the prompt, on every turn.**
+Not written to a file the agent might read, and not left in the skill's text —
+an agent mid-interview will not open a config file, and a threshold that is
+merely documented is a threshold that is quietly ignored. The block also
+carries **the human's stated reason**, because a bare number tells the agent
+where the bar is but not what it is for, and without the reason an 85% and a
+95% read as arbitrary. It ends by telling the agent the bar is *not its own
+to raise* — it may say once that it seems wrong, then continue at the level
+set.
+
+**Range: 1–100.** 100 is a legitimate setting meaning "ask me about
+everything," and the system must not argue with it. The floor is 1 because
+anything lower is not a gate, and a gate that cannot block should not be
+offered as a setting. Out-of-range values are **refused, not clamped** — a
+`450` in the config is a typo worth surfacing, and quietly treating it as 100
+would hide it.
+
+**One splice point, not eighteen.** There are eight prompt builders and
+eighteen places a `codeBlock` is attached. Editing each builder to append a
+threshold is the F9 drift pattern in new costume: the sixth builder gets
+forgotten, or gets differently-worded text, and the agent receives two
+different instructions about the same bar. So each builder was renamed to
+`*Raw` and re-exposed under its original name by a wrapper that appends the
+threshold. Every existing call site is untouched, and a ninth builder cannot
+be forgotten. The block text itself is built **server-side**
+(`/threshold-block`) so there is exactly one copy of the wording.
+
+**The Crafting Table shows the bars before the human commits to a lens**, and
+names the file to edit. A control the human has never seen is one they will
+never change, and the whole point is that this is their decision. Editing
+happens in the vault; the panel reads and points.
+
+**Every artifact records the bar it was produced under.** Months later, "why
+is this thinner than the last one?" is answerable from the file rather than
+from memory — the threshold is a human decision that varies per lens and over
+time, so an artifact without it is unexplainable.
+
+**Two bugs found by driving the real UI.** `thrInfo` is a map, not an array,
+so `.map()` threw and the Crafting Table **failed to render at all** — a
+total failure rather than a missing panel, because `renderDesk` builds its
+whole `innerHTML` in one template. And the block initially omitted the human's
+reason entirely: the number arrived, the reasoning did not, which is half a
+feature.
+
+**`scripts/e2e-verify-f23.js` (61 checks)** covers parsing, the legal range,
+validation refusals, the block's wording, the HTTP surface, the one-splice-
+point source posture, and — the part that matters — **a real browser proving
+the value reaches a live prompt.** It edits the config to 60%, 100% and 70%
+and asserts each appears in the corresponding prompt. Teeth verified by
+removing the wrappers from three builders: 6 checks fail, including the live-
+prompt ones, and pass again on restore. Two cleanup assertions guard against a
+suite leaving a test threshold behind in the shipped config, which would
+silently change the next person's run.
+
+### Pre-existing failure found along the way (not caused by F23)
+
+`scripts/e2e-verify.js` fails 7 checks with a `fetch failed` harness error —
+on **clean `main`, with none of the F23 changes applied**, verified by stashing
+them and re-running. So it predates this work. It is not counted in the
+totals below, and it is worth fixing rather than carrying: the suite depends
+on a live server and appears to be racing one. Same shape as the known F19
+`sleep(1200)` race.
+
 ---
 
 ## The pattern in both columns

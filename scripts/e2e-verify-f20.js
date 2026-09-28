@@ -41,7 +41,14 @@ const read = (p) => fs.readFileSync(p, 'utf8');
   check('_wfUxInit exists',      /async function _wfUxInit\(/.test(app));
   check('_wfUxRespond exists',   /function _wfUxRespond\(/.test(app));
   check('_wfUxPostProcessMsg exists', /function _wfUxPostProcessMsg\(/.test(app));
-  check('_wfUxBridgePrompt exists',   /function _wfUxBridgePrompt\(/.test(app));
+  // F23 renamed the real builder to _wfUxBridgePromptRaw and exposed the
+  // original name as a wrapper that splices in the confidence threshold. Both
+  // must exist: the raw one does the work, the wrapper is what every call
+  // site actually reaches.
+  check('_wfUxBridgePromptRaw exists', /function _wfUxBridgePromptRaw\(/.test(app));
+  check('_wfUxBridgePrompt is exported via the threshold wrapper',
+        /const _wfUxBridgePrompt = \(\.\.\.a\) => _wfWithThreshold\(_wfUxBridgePromptRaw\(\.\.\.a\)\);/
+          .test(app));
 
   // ── 2. The step machine is a LOOP, not a ladder ────────────────────────
   section('Interview loop');
@@ -156,8 +163,12 @@ const read = (p) => fs.readFileSync(p, 'utf8');
         && /_wfUxBridgePrompt\(_chat\.artifactPath, name, _chat\.artifactContent \|\| ''\)/.test(app));
   check('resume uses the ux post-process message',
         /wf === 'ux-bridge-default'\s*\?\s*_wfUxPostProcessMsg\(\)/.test(app));
+  // The window is generous because F23 inserted the threshold-loading
+  // prelude between the function's opening brace and the resume call. The
+  // property under test is that resume is reached on this path, not the exact
+  // line offset.
   check('init honours the shared resume path',
-        /async function _wfUxInit\(\)[\s\S]{0,200}_wfResumeFromPause\(\)/.test(app));
+        /async function _wfUxInit\(\)[\s\S]{0,900}_wfResumeFromPause\(\)/.test(app));
 
   // ── 6. Option C can still hand a spec to another workflow ──────────────
   section('Handoff');
