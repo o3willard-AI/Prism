@@ -180,13 +180,27 @@ const read = (p) => fs.readFileSync(p, 'utf8');
         active.length === 0, 'active: ' + active.join(', '));
   check('any shipped integration config is a draft, not armed',
         configs.every(f => !active.includes(f)), configs.join(', '));
+  // No integration config may carry a secret. This deliberately mirrors
+  // agentic.py's _FORBIDDEN_FIELDS so the two cannot drift: a doc check that
+  // is narrower than the runtime guard reports "clean" for a file the runtime
+  // would reject, which is worse than having no check at all — it looks like
+  // coverage. If you change one, change both. A parity test below asserts the
+  // token lists match.
+  const FORBIDDEN = /\*\*(?:[^*]*(?:api[_-]?key|secret|token|password|credential|bearer)[^*]*)\*\*\s*:\s*\S/i;
+  const leaks = configs.filter(f =>
+    FORBIDDEN.test(fs.readFileSync(path.join(VAULT, 'knowledge', 'integrations', f), 'utf8')));
   check('no integration config may contain a literal key',
-        configs.every(f => {
-          const t = fs.readFileSync(path.join(VAULT, 'knowledge', 'integrations', f), 'utf8');
-          return !/\*\*(api[_-]?key|secret|token|password)\*\*\s*:\s*\S/i.test(t);
-        }),
-        configs.filter(f => /\*\*(api[_-]?key|secret|token|password)\*\*\s*:\s*\S/i.test(
-          fs.readFileSync(path.join(VAULT, 'knowledge', 'integrations', f), 'utf8'))).join(', '));
+        leaks.length === 0, 'leaks in: ' + leaks.join(', '));
+
+  // Parity with the runtime guard, asserted rather than assumed.
+  const agenticSrc = fs.readFileSync(path.join(__dirname, '..', 'prism', 'agentic.py'), 'utf8');
+  const runtime = (agenticSrc.match(/_FORBIDDEN_FIELDS\s*=\s*re\.compile\(([\s\S]*?)\)/) || [])[1] || '';
+  for (const term of ['credential', 'bearer', 'api', 'secret', 'token', 'password']) {
+    check(`the doc check still covers "${term}" like the runtime guard`,
+          new RegExp(term.replace(/[_]/g, '[_]?'), 'i').test(FORBIDDEN.source)
+          && new RegExp(term, 'i').test(runtime),
+          `runtime: ${runtime.replace(/\s+/g, ' ').trim().slice(0, 80)}`);
+  }
 
   console.log(`\n${pass}/${pass + fail} checks passed`);
   if (fail) { console.log(`${fail} FAILED`); process.exit(1); }

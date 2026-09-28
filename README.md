@@ -284,3 +284,37 @@ npx playwright install chromium      # if you have no Chrome
 
 It also needs the stack running and a front door that **preserves `Host`** (see
 Security posture above).
+
+### F22 needs a specially-started server
+
+`scripts/e2e-verify-f22.py` is the one suite that cannot run against a normal
+`./scripts/start.sh`. It needs a key in the **server's** environment (the key
+is resolved at call time, so exporting it after startup does nothing), and it
+needs the fake agent's self-signed cert trusted:
+
+```bash
+# once
+openssl req -x509 -newkey rsa:2048 -keyout /tmp/fake-key.pem \
+    -out /tmp/fake-cert.pem -days 2 -nodes -subj "/CN=127.0.0.1" \
+    -addext 'subjectAltName=IP:127.0.0.1,DNS:localhost'
+
+# before starting Prism
+export PRISM_TEST_KEY="sk-test-FAKE-not-a-real-key"
+export SSL_CERT_FILE=/tmp/fake-cert.pem
+./scripts/start.sh
+
+python3 scripts/e2e-verify-f22.py      # 41/41
+```
+
+`SSL_CERT_FILE` is not incidental: `agentic.py` refuses an `http://` endpoint
+because that would put the key on the wire in the clear, so the fake agent
+speaks TLS and the suite must trust it.
+
+**If the environment is wrong the suite says so and exits 2** rather than
+reporting a scatter of product-looking failures. Seeing `No API key found` or
+`certificate verify failed` in the output means *this*, not a code defect —
+the obvious reaction otherwise is to debug `agentic.py`, which is correct.
+
+The TLS requirement also means the suite cannot be routed around the http
+guard, which is deliberate: the guard is the thing under test.
+
