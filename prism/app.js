@@ -1911,7 +1911,88 @@ function _chatSend() {
   setTimeout(() => _wfDispatch(text), 600);
 }
 
+// ── F24: the clarity-answers loop ──────────────────────────────────────────
+
+// Which prompt builder re-runs a given shape. One table, so the loop works
+// for every lens and a new shape is a one-line addition rather than a branch
+// somewhere in a Respond function.
+const _WF_CLARITY_BUILDERS = {
+  'intent-synth':      (name, content) => _wfReqIntentSynthPrompt(_chat.artifactPath, 'unordered', content),
+  'prd-gate':          (name, content) => _wfReqPrdGatePrompt(_chat.artifactPath, name, content),
+  'conv-synth':        (name, content) => _wfRatConvSynthPrompt(_chat.artifactPath, 'unordered', content),
+  'structured-account':(name, content) => _wfRatStructurePrompt(_chat.artifactPath, name, content),
+  'doc-synth':         (name, content) => _wfHypDocSynthPrompt(_chat.artifactPath, 'unordered', content),
+  'hypothesis-brief':  (name, content) => _wfHypGatePrompt(_chat.artifactPath, name, content),
+  'ux-handoff-spec':   (name, content) => _wfUxBridgePrompt(_chat.artifactPath, name, content),
+};
+
+function _wfBuilderForShape(shape) {
+  return _WF_CLARITY_BUILDERS[shape] || null;
+}
+
+// The agent said the output was short and named specific gaps. The human has
+// answered; re-run the same skill with the answers folded into the context.
+//
+// The previous output is included, because the agent cannot judge a revision
+// without seeing what it originally produced. The agent's questions are
+// included too, with the human's answer under each — so the next pass
+// inherits the whole exchange rather than just the latest message.
+function _wfClarityAnswerStep(userText) {
+  const shape = _chat.pendingShape || '';
+  const qs = _chat.pendingQuestions || [];
+  const prev = _chat.clarityPrevOutput || '';
+  const builder = _wfBuilderForShape(shape);
+
+  // Clear the pending state FIRST. A builder miss, an exception, or a user who
+  // pastes something enormous must not leave the workflow stuck in a step that
+  // will swallow every subsequent message.
+  _chat.wfStep = _chat.pendingReturnStep || _chat.wfStep;
+  _chat.pendingQuestions = null;
+  _chat.pendingShape = null;
+  _chat.clarityPrevOutput = '';
+  _chat.pendingReturnStep = null;
+
+  if (!builder) {
+    _chatAgentSay(
+      'Your answers were recorded, but Prism does not know how to re-run this step. '
+      + 'Add them to the prompt above manually and paste the new output back here.');
+    return;
+  }
+
+  const name = _chat.artifactTitle
+    || (_chat.artifactPath || '').split('/').pop().replace('.md', '');
+
+  const answered = qs.length
+    ? qs.map((q, i) => `Q${i + 1}: ${q}\nA: `).join('\n')
+    : '(the agent named no specific gaps)';
+
+  const enriched =
+    (_chat.artifactContent || '')
+    + '\n\n--- Previous agent output, judged below threshold ---\n' + prev
+    + '\n--- The agent asked, the user answered ---\n'
+    + answered + '\n' + userText + '\n';
+
+  _chat.messages.push({
+    role: 'agent',
+    text: 'Answers recorded — re-running the skill with them. Prism will judge the new '
+        + 'output against the same bar.',
+    attachments: [],
+    codeBlock: builder(name, enriched),
+  });
+  const t = document.getElementById('wf-thread');
+  if (t) { t.innerHTML = _chat.messages.map(_chatBubbleHtml).join(''); _chatScrollBottom(); }
+  _chatScheduleSave();
+}
+
 function _wfDispatch(userText) {
+  // F24: the clarity-answers step is the SAME for every lens — the agent named
+  // gaps, the human answered, re-run the skill and judge again. Intercepting
+  // here rather than in each of the four Respond functions is the F23 lesson
+  // applied again: one place means a fifth lens cannot forget it.
+  if (_chat.wfStep === 'clarity-answers') {
+    _wfClarityAnswerStep(userText);
+    return;
+  }
   const respond = _wfRunnerFor(_chat.workflowId, 'Respond');
   if (respond) { respond(userText); return; }
   // No runner for this workflow. Say so plainly and point at the door that
@@ -2639,13 +2720,53 @@ async function _wfVerifyPasted(userText, shape) {
           hits: 0, total: 0, missing: [], shape, advice: v.error || 'Skipped shape check.' };
   }
 
+  // F24: the structural check above is a FLOOR. Ask the agent whether the
+  // artifact actually meets the bar, and let THAT decide the step.
+  const res = await _wfAdjudicate(userText, shape);
+
   const idx = _chat.messages.length - 1;   // the user's paste
+
+  // A judged at_threshold advances automatically, exactly as a structural
+  // match used to. Everything else needs a human decision, and the doors now
+  // explain WHY — the judgment, the reason, and the agent's own confidence.
+  const judgedClear = res.ok && res.asked && res.verdict === 'at_threshold';
+
   _chat.messages.push({
     role: 'agent', text: '', attachments: [],
-    verify: { ...v, shape, msgIdx: idx, accepted: false, done: v.verdict === 'match' },
+    verify: {
+      ...v, shape, msgIdx: idx,
+      accepted: false,
+      judgment: res,
+      // done means "the step has moved on". Only a clear judgment does that
+      // on its own.
+      done: judgedClear,
+      clarity: res.verdict,
+    },
   });
-  if (v.verdict === 'match') {
+
+  if (judgedClear) {
     _wfAdvanceVerified(v, userText);
+  } else if (res.ok && res.asked && res.verdict === 'below_threshold'
+             && (res.judgment.questions || []).length) {
+    // F24: the loop. The agent named specific gaps; show them and open the
+    // answering step, so "below threshold" is a route forward rather than a
+    // dead end.
+    //
+    // The previous output and the step we came from are captured so the
+    // re-run can show the agent what it originally produced and return to the
+    // right step afterwards. Both are cleared by _wfClarityAnswerStep.
+    // `_chat.wfStep` IS the step we came from — _wfVerifyPasted has no local
+    // copy, and by the time this runs the caller has not changed it.
+    _chat.pendingReturnStep = _chat.wfStep;
+    _chat.clarityPrevOutput = userText;
+    _chat.wfStep = 'clarity-answers';
+    _chat.pendingQuestions = res.judgment.questions;
+    _chat.pendingShape = shape;
+    _chatAgentSay(
+      `${_wfJudgmentSummary(res)}\n\n`
+      + `**Answer them below.** When you send your answers, Prism re-runs the skill `
+      + `with them added to the context — it will judge the new output again against `
+      + `the same ${res.threshold}% bar.`);
   }
   _wfRerenderThread();
   _chatScheduleSave();
@@ -2654,31 +2775,44 @@ async function _wfVerifyPasted(userText, shape) {
 function _verifyCardHtml(idx) {
   const v = _chat.messages[idx].verify;
   if (!v) return '';
+  // F24: the agent's judgment is shown ABOVE the structural verdict, because
+  // it is the thing that actually decided the step. The floor is demoted and
+  // labelled as such — it is a hint about shape, not an assessment of clarity.
+  const judgmentHtml = v.judgment ? _wfJudgmentSummary(v.judgment) : '';
   const cls = v.verdict === 'match' ? 'pass' : v.verdict === 'partial' ? 'partial' : 'fail';
   const icon = v.verdict === 'match' ? '✅' : v.verdict === 'partial' ? '🟡' : '🔴';
   const head = v.verdict === 'match'
-    ? `Structure verified — ${v.kind_label || 'shape check passed'}`
+    ? `Shape check — ${v.kind_label || 'structure recognised'}`
     : v.verdict === 'partial'
-      ? `Partial match — ${v.kind_label || 'shape unclear'}`
+      ? `Shape partially recognised — ${v.kind_label || 'shape unclear'}`
       : 'Shape not recognised';
   const missing = (v.missing || []).length
     ? `<ul class="wf-verify-missing">${v.missing.map(m => `<li>${escHtml(m)}</li>`).join('')}</ul>`
     : '';
+  const floorNote = judgmentHtml
+    ? `<div class="wf-verify-floor-note">Structural floor only — it can catch a missing
+       section, but it cannot judge clarity.</div>`
+    : '';
+  // A structural `match` no longer auto-advances on its own — only a judged
+  // at_threshold does. So the doors appear for a structural match too when the
+  // agent did not clear it, which is the whole point: the floor cannot approve.
+  const needsDecision = !v.done;
   const doors = v.done
     ? `<div class="wf-verify-applied">${v.accepted ? '✓ accepted — workflow advanced' : '✓ re-run requested'}</div>`
-    : v.verdict === 'match'
-      ? ''   // auto-advanced; no decision needed
-      : `<div class="wf-verify-doors">
+    : needsDecision
+      ? `<div class="wf-verify-doors">
            <button class="wf-door" onclick="_verifyAccept(${idx})">✓ Accept anyway</button>
            <button class="wf-door" onclick="_verifyRerun(${idx})">↻ Re-run the skill</button>
-         </div>`;
+         </div>`
+      : '';
   return `
     <div class="wf-verify ${cls}">
+      ${judgmentHtml}
       <div class="wf-verify-head">${icon} ${head}
         <span class="wf-verify-score">${v.total ? v.hits + '/' + v.total + ' markers' : ''}</span>
       </div>
       <div class="wf-verify-body">
-        ${escHtml(v.advice || '')}${missing}
+        ${escHtml(v.advice || '')}${missing}${floorNote}
       </div>
       ${doors}
     </div>`;
@@ -2715,6 +2849,101 @@ function _verifyRerun(idx) {
   _chatScheduleSave();
 }
 
+// ── F24: the agent's judgment, and the loop it drives ─────────────────────
+//
+// F2 verified PASTED OUTPUT against regex markers. That is a structural
+// floor, and it is useful for catching a paste that is obviously the wrong
+// shape. It is not a clarity gate, and the 95% it implied was never computed —
+// the marker for "clarity" was the agent's own CLAIM that it had reached 95%.
+//
+// F24 asks the agent. This function is the seam: the structural check still
+// runs and is still shown, but the DECISION — advance, ask, or hand back to
+// the human — comes from the agent's judgment, and the human's configured
+// threshold.
+//
+// Three failure states are kept distinct, because collapsing them is how the
+// old gate lied:
+//   judged at_threshold    → advance
+//   judged below_threshold → loop: show the agent's DERIVED questions
+//   no usable judgment     → the human decides, explicitly, with the reason
+//
+// "No usable judgment" is a real and common case (no integration configured,
+// the service down, a reply we could not parse). It must NOT silently fall back
+// to the structural verdict, because that is precisely what made the old gate
+// indistinguishable from a real assessment.
+
+async function _wfAdjudicate(userText, shape) {
+  const lens = _chat.workflowId || '';
+  let res = null;
+  try {
+    res = await apiPost('/adjudicate', {
+      artifact: userText,
+      lens: lens,
+      shape: shape || '',
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      verdict: 'unjudged',
+      asked: false,
+      agent_error: 'Could not reach the clarity check — ' + e.message,
+      floor: null,
+    };
+  }
+  return { ...res, ok: true };
+}
+
+// The human-facing summary of a judgment. Shown in the verdict card so the
+// number, the reason and the agent are all visible — the whole point is that
+// a human can disagree with the judgment, which they cannot do if they cannot
+// see it.
+function _wfJudgmentSummary(res) {
+  if (!res || res.ok === false) {
+    return `<div class="wf-judge wf-judge-none">`
+      + `⚠️ <strong>Nothing was judged.</strong> `
+      + escHtml((res && res.agent_error) || 'The clarity check could not run.')
+      + ` The structural check below cannot assess clarity — it only looks at shape.`
+      + `</div>`;
+  }
+  if (!res.asked) {
+    return `<div class="wf-judge wf-judge-none">`
+      + `⚠️ <strong>Unjudged — nobody was asked.</strong> `
+      + escHtml(res.agent_error || 'No agent integration is configured.')
+      + ` The structural check below is a floor only; it cannot approve an artifact.`
+      + `</div>`;
+  }
+
+  const j = res.judgment || {};
+  const thr = res.threshold;
+  const who = j.agent_title || j.agent || 'the agent';
+  const conf = j.confidence ? ` (its own confidence ${j.confidence}%)` : '';
+
+  if (res.verdict === 'at_threshold') {
+    return `<div class="wf-judge wf-judge-at">`
+      + `✅ <strong>At threshold.</strong> `
+      + `${escHtml(who)} judged this at ${thr}%${conf}. `
+      + (j.reasoning ? `<em>${escHtml(j.reasoning)}</em>` : '')
+      + `</div>`;
+  }
+  if (res.verdict === 'below_threshold') {
+    const qs = (j.questions || [])
+      .map(q => `<li>${escHtml(q)}</li>`).join('');
+    return `<div class="wf-judge wf-judge-below">`
+      + `🟡 <strong>Below threshold.</strong> `
+      + `${escHtml(who)} judged this at ${thr}%${conf}. `
+      + (j.reasoning ? `<em>${escHtml(j.reasoning)}</em>` : '')
+      + (qs ? `<div class="wf-judge-gaps">Gaps it identified — answer these and it re-runs:</div><ul class="wf-judge-questions">${qs}</ul>` : '')
+      + `</div>`;
+  }
+  // uncertain, or a reply we could not parse.
+  const why = j.parse_failed
+    ? `${escHtml(who)} replied with something Prism could not read, so no judgment was extracted.`
+    : `${escHtml(who)} cannot tell${j.reasoning ? `: <em>${escHtml(j.reasoning)}</em>` : '.'}`;
+  return `<div class="wf-judge wf-judge-uncertain">`
+    + `🔵 <strong>Uncertain.</strong> ${why} `
+    + `This is an opinion about its own confidence, not a pass.`
+    + `</div>`;
+}
 // Single source of truth for "the paste was accepted" transitions — used by
 // both auto-advance (match) and the Accept-anyway door (partial/fail).
 function _wfAdvanceVerified(v, userText) {
@@ -3102,6 +3331,7 @@ async function wfPauseHere() {
   const stepDescriptions = {
     'init':               'Workflow initialising — artifact not yet loaded.',
     'routing':            'Detecting artifact type and choosing agent path.',
+    'clarity-answers': 'The agent judged the last output below threshold and named specific gaps. Answering them re-runs the skill.',
     'awaiting-doc-synth': 'Waiting for Document Synthesizer output from user.',
     'awaiting-bridge': 'UX Bridge interview — waiting for the agent’s next question or the finished spec.',
     'interview': 'UX Bridge interview in progress — the PM is answering questions.',
@@ -3118,6 +3348,7 @@ async function wfPauseHere() {
   const stepDesc = stepDescriptions[_chat.wfStep] || _chat.wfStep;
 
   const nextStepGuide = {
+    'clarity-answers':     `Answer the agent's questions above, then send. Prism re-runs the skill with your answers and judges the new output against the same bar.`,
     'awaiting-intent-synth': `Run the **Intent Synthesizer** skill prompt shown in the last agent message above. Paste the output into the chat and send.`,
     'awaiting-conv-synth':   `Run the **Conversation Synthesizer** skill prompt shown above. Paste the output into the chat and send.`,
     'awaiting-structure':    `Run the **structure prompt** shown above. Paste the output into the chat and send.`,
