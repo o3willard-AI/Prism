@@ -918,6 +918,74 @@ adjudication is the first configured, keyed integration by sorted filename.
 When several exist, which one should judge is a real question this defers. A
 per-lens `judged by` field is the obvious answer and is not built.
 
+### F25 — the clarity-answers loop: below-threshold is a route forward ✅ pending review 29 Sep 2026
+~~The agent could judge an artifact below threshold, and the human could see
+the questions, and then had nowhere to go.~~ F24 produced a verdict with no
+consequence attached. That is the dead end Principle 2 of the gate document
+warns about: Prism would know the output was inadequate and have no route to
+an adequate one — **worse than not checking at all**, because the human has
+been told something is wrong and then left holding it.
+
+**The loop, end to end:**
+
+```
+paste → agent judges below threshold, names specific gaps
+      → Prism shows the gaps and opens `clarity-answers`
+          → human answers
+              → Prism re-runs the same skill with
+                · the original artifact
+                · the previous agent output, marked as judged-below
+                · each question with the answer under it
+                · the human's answer
+                · the threshold again
+                  → agent judges the NEW output against the same bar
+```
+
+The previous output is included because the agent cannot judge a revision
+without seeing what it originally produced. The threshold is re-stated because
+the bar must not drift between turns. The questions carry their answers
+individually so the agent inherits the whole exchange, not just the last
+message.
+
+**One place, not four.** The step is identical for every lens, so it is
+intercepted in `_wfDispatch` rather than added to each of the four `Respond`
+functions. That is the F23 splice lesson applied again: a fifth lens cannot
+forget it. The shape→builder map is a table, so a new shape is one line rather
+than a branch in a dispatch function.
+
+**The state is cleared before anything can fail.** `_wfClarityAnswerStep`
+clears the pending questions, shape, previous output and return step *first*,
+then looks up the builder. A shape Prism cannot re-run, an exception, or a
+human pasting a novel would otherwise leave the workflow sitting in a step that
+swallows every subsequent message with no way out. On an unknown shape it says
+so plainly and hands the human back their thread. A suite check drives exactly
+that case.
+
+**The judgment is now visible where the decision is made.** The verdict card
+shows the agent, the bar, the agent's own confidence, its reasoning, and the
+gaps — above the structural verdict, which is relabelled "Shape check" and
+carries an explicit line saying it is a floor that cannot judge clarity. A
+human can disagree with a judgment they can see; they cannot disagree with one
+they cannot.
+
+**And the floor genuinely cannot approve.** A structural `match` no longer
+auto-advances; only a judged `at_threshold` does, so the doors now appear even
+for a shape match the agent did not clear. `scripts/e2e-verify-f25.js` proves
+it with the document that motivated all of this: a PRD with every required
+heading and `TBD` behind each one. It matches the shape. The step does **not**
+advance. Teeth verified on four properties — never opening the loop (12
+failures), dropping the questions from the re-run (2), **letting the floor
+approve again (3)**, and trapping the workflow on an unknown shape (2).
+
+**A regression this surfaced, honestly.** `e2e-verify-f20-loop.js` failed 5
+checks because the UX spec now routes through `/adjudicate` — which is the
+intended change, not a bug. The suite stubbed the judgment rather than being
+weakened, because the thing it tests is the interview loop, not the judgment,
+and F24 covers the judgment exhaustively (132 checks). A second fix in the
+same file: the question-count assertion counted across the whole thread, so it
+passed or failed depending on how many judgment cards happened to be on screen.
+Scoped to the card under test.
+
 ---
 
 ## The pattern in both columns

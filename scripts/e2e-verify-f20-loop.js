@@ -38,6 +38,37 @@ class El {
 const byId = {};
 const base = `http://127.0.0.1:8090/prism`;
 const f = (u, o) => fetch(new URL(u, API).toString(), o);
+
+// F24 routes the UX spec through /adjudicate, so the loop suite must be able
+// to say what the agent judges. The real endpoint is covered exhaustively by
+// F24; here the concern is the interview loop, so the judgment is stubbed.
+let _adjudicationStub = null;
+const fStubbed = (u, o) => {
+  const url = new URL(u, API).toString();
+  if (url.endsWith('/adjudicate') && _adjudicationStub) {
+    return Promise.resolve({
+      ok: true, status: 200,
+      json: () => Promise.resolve({
+        ok: true, asked: true,
+        lens: 'ux-bridge-default', threshold: 95,
+        verdict: _adjudicationStub.verdict || 'at_threshold',
+        judgment: {
+          verdict: _adjudicationStub.verdict || 'at_threshold',
+          confidence: _adjudicationStub.confidence ?? 95,
+          reasoning: _adjudicationStub.reasoning || 'stubbed for the loop suite',
+          questions: _adjudicationStub.questions || [],
+          parse_failed: false,
+          agent: 'stub', agent_title: 'Stub Adjudicator',
+          threshold: 95,
+        },
+        agent_error: null,
+        floor: null,
+        record: null,
+      }),
+    });
+  }
+  return f(u, o);
+};
 const sandbox = {
   console,
   document: {
@@ -48,13 +79,18 @@ const sandbox = {
   },
   location: { href: base },
   window: { addEventListener(){}, removeEventListener(){}, setTimeout, clearTimeout,
-            location: { href: base }, fetch: f },
-  fetch: f, setTimeout, clearTimeout, confirm: () => true, alert(){},
+            location: { href: base }, fetch: fStubbed },
+  fetch: fStubbed, setTimeout, clearTimeout, confirm: () => true, alert(){},
   Date, Math, JSON, Object, Array, String, Number, Boolean, RegExp, Error,
   parseInt, isNaN, encodeURIComponent, decodeURIComponent,
   requestAnimationFrame: (f) => setTimeout(f, 0),
 };
 sandbox.globalThis = sandbox;
+// Let the test set the judgment the 'agent' will return. Defined as a
+// sandbox global rather than an outer-scope closure, because the sandbox is
+// a separate context and cannot see this module's variables.
+sandbox.__setAdjudication = (v) => { _adjudicationStub = v || null; };
+sandbox.__getAdjudication = () => _adjudicationStub;
 vm.createContext(sandbox);
 vm.runInContext(app, sandbox, { timeout: 40000 });
 const run = (e) => vm.runInContext(e, sandbox, { timeout: 40000 });
@@ -182,12 +218,19 @@ TODO
   check('the re-issued prompt still carries the original description',
         /Analysts need to export/.test(reissued));
 
-  // Turn 2: the agent finishes the interview and emits the spec.
-  run(`_chat.messages.push({ role: 'user', text: 'The finished spec', attachments: [] })`);
-  await run(`_wfUxRespond(${JSON.stringify(SPEC)})`);
-  await sleep(1200);
+    // A LLM spec outranks a structural one. F24 wired the UX spec path through
+    // /adjudicate, so a spec is only written when the AGENT judges it at or
+    // above the bar — the regex floor no longer approves it. This suite stubs
+    // that endpoint so the spec is judged clear; the F24 suite covers the
+    // below-threshold and unjudged branches exhaustively.
+    sandbox.__setAdjudication({ verdict: "at_threshold" });
 
-  check('a spec advances to post-processing', run('_chat.wfStep') === 'post-processing',
+    // Turn 2: the agent finishes the interview and emits the spec.
+    run(`_chat.messages.push({ role: 'user', text: 'The finished spec', attachments: [] })`);
+    await run(`_wfUxRespond(${JSON.stringify(SPEC)})`);
+    await sleep(1200);
+
+    check('a spec advances to post-processing', run('_chat.wfStep') === 'post-processing',
         run('_chat.wfStep'));
   const final = await (await fetch(API + '/file?path=' + encodeURIComponent(reqPath))).json();
   check('the spec was written into the file',
