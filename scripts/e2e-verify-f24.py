@@ -2,7 +2,7 @@
 """F24: agent-adjudicated clarity — Prism asks, the agent judges, the answer
 is recorded.
 
-SETUP — same as F22, because this suite talks to the same fake agent:
+SETUP — same as F22, because this suite talks to a fake agent over TLS:
 
     export PRISM_TEST_KEY="sk-test-FAKE-not-a-real-key"
     export SSL_CERT_FILE=/tmp/fake-cert.pem
@@ -12,13 +12,18 @@ SETUP — same as F22, because this suite talks to the same fake agent:
         -out /tmp/fake-cert.pem -days 2 -nodes -subj "/CN=127.0.0.1" \\
         -addext 'subjectAltName=IP:127.0.0.1,DNS:localhost'
 
-The fake agent echoes the prompt, so it never returns parseable JSON. That is
-the honest and most interesting case: Prism asked, and got nothing usable, and
-must say exactly that rather than falling back to the old regex ratio.
+The suite reads its CA from F24_CA_FILE (or /tmp/fake-cert.pem), NOT from
+SSL_CERT_FILE — that variable is already set to a certifi bundle in many
+environments, and trusting it makes every handshake fail while the agent is
+perfectly healthy. A test bug that looks exactly like a product bug.
 
-Two halves, because the failure modes differ:
+Three halves, because the interesting failures are in different places:
   1. The parser — every way a reply can be malformed or contradictory.
-  2. The live path — a real agent, every way the CALL can fail.
+  2. The live path against the echo agent — every way the CALL can fail.
+  3. The live path against a STUB that returns real verdicts — because the
+     echo agent can never exercise the paths that matter. An agent that never
+     returns `below_threshold` means the derived-questions half of this
+     feature is untested, and that half is the whole point of it.
 """
 import json
 import os
@@ -403,6 +408,150 @@ def live_tests():
         clean()
 
 
+def verdict_tests():
+    """A stub that returns REAL verdicts.
+
+    The echo agent can only ever produce parse failures, so without this the
+    three verdicts — and specifically the derived-questions half, which is the
+    entire point of the feature — would be untested. The stub picks its reply
+    from a marker in the artifact, so one server serves all three.
+    """
+    section('Live verdicts — an agent that actually answers')
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from socketserver import ThreadingMixIn
+    import threading
+    import ssl as _ssl
+
+    replies = {
+        'STUB:AT': json.dumps({
+            "verdict": "at_threshold", "confidence": 93,
+            "reasoning": "The PRD names the users, the failure mode, and two "
+                         "measurable targets. Intent and scope are both clear.",
+            "questions": []}),
+        'STUB:BELOW': json.dumps({
+            "verdict": "below_threshold", "confidence": 71,
+            "reasoning": "There is no success metric, so I cannot tell whether "
+                         "this solves the problem.",
+            "questions": [
+                "What baseline and target do you expect for export success?",
+                {"question": "Which browsers must the export work in?",
+                 "gap": "acceptance criteria cannot be written without it"},
+                "Is a 5-minute budget acceptable, or is there a tighter constraint?"]}),
+        'STUB:UNCERTAIN': json.dumps({
+            "verdict": "uncertain", "confidence": 40,
+            "reasoning": "This could be a reporting bug or a data-loss bug. The "
+                         "description does not distinguish them.",
+            "questions": []}),
+    }
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            pass
+
+        def do_POST(self):
+            n = int(self.headers.get('Content-Length', 0))
+            try:
+                body = json.loads(self.rfile.read(n) or b'{}')
+            except ValueError:
+                body = {}
+            sent = ''.join(m.get('content', '') for m in body.get('messages', []))
+            marker = next((k for k in replies if k in sent), 'STUB:AT')
+            raw = json.dumps({
+                "id": "stub", "model": "stub-model",
+                "choices": [{"index": 0, "finish_reason": "stop",
+                             "message": {"role": "assistant",
+                                         "content": replies[marker]}}],
+            }).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    class S(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+
+    port = 8300
+    ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(CERT, CERT.replace('cert', 'key'))
+    srv = S(('127.0.0.1', port), H)
+    srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    for _ in range(50):
+        try:
+            _ssl.create_default_context(cafile=CERT).wrap_socket(
+                socket.create_connection(('127.0.0.1', port), 0.4),
+                server_hostname='127.0.0.1').close()
+            break
+        except Exception:
+            time.sleep(0.1)
+
+    open(os.path.join(ADIR, 'f24-stub.md'), 'w').write(
+        f'# stub\n\n**Title:** Stub Adjudicator\n**Status:** active\n'
+        f'**Kind:** openai\n**Endpoint:** https://127.0.0.1:{port}/v1/chat/completions\n'
+        f'**Model:** stub\n**Auth env:** PRISM_TEST_KEY\n')
+
+    try:
+        # at_threshold
+        _, d = post('/adjudicate', {'artifact': 'STUB:AT\n\nA complete PRD.',
+                                    'lens': 'requirements-default', 'shape': 'prd-gate'})
+        check('at_threshold: verdict is correct', d['verdict'] == 'at_threshold', d['verdict'])
+        check('at_threshold: asked=true', d['asked'] is True)
+        check('at_threshold: the agent\'s confidence is carried',
+              d['judgment']['confidence'] == 93, str(d['judgment']['confidence']))
+        check('at_threshold: the reasoning is carried',
+              'measurable targets' in d['judgment']['reasoning'])
+        check('at_threshold: no questions are invented',
+              d['judgment']['questions'] == [])
+        check('at_threshold: the record names the agent and the bar',
+              'Stub Adjudicator' in d['record'] and '95%' in d['record'])
+        check('at_threshold: no raw JSON stored on a clean judgment',
+              'raw' not in d['judgment'])
+
+        # below_threshold — the derived-questions half
+        _, d = post('/adjudicate', {'artifact': 'STUB:BELOW\n\nA PRD with no metrics.',
+                                    'lens': 'requirements-default', 'shape': 'prd-gate'})
+        check('below_threshold: verdict is correct',
+              d['verdict'] == 'below_threshold', d['verdict'])
+        check('below_threshold: asked=true', d['asked'] is True)
+        check('below_threshold: the agent\'s confidence (71) is carried',
+              d['judgment']['confidence'] == 71, str(d['judgment']['confidence']))
+        check('below_threshold: THREE derived questions came back',
+              len(d['judgment']['questions']) == 3,
+              str(len(d['judgment']['questions'])))
+        qs = ' '.join(d['judgment']['questions'])
+        check('a question is concrete, not generic',
+              'baseline' in qs.lower() and 'more detail' not in qs.lower(), qs[:70])
+        check('a {question, gap} object keeps the gap it closes',
+              'closes: acceptance criteria' in qs, qs[:110])
+        check('below_threshold: the record lists the gaps for the human',
+              'Gaps the agent identified' in d['record'], d['record'][:110])
+        check('below_threshold: the record keeps the agent\'s reasoning',
+              'no success metric' in d['record'].lower())
+
+        # uncertain
+        _, d = post('/adjudicate', {'artifact': 'STUB:UNCERTAIN\n\nAmbiguous.',
+                                    'lens': 'requirements-default'})
+        check('uncertain: verdict is uncertain, NOT unjudged',
+              d['verdict'] == 'uncertain', d['verdict'])
+        check('uncertain: asked=true — this is an opinion, not an absence',
+              d['asked'] is True)
+        check('uncertain: the reasoning explains why it cannot tell',
+              'does not distinguish' in d['judgment']['reasoning'])
+        check('uncertain: no questions are invented',
+              d['judgment']['questions'] == [])
+
+        # a per-lens bar reaches a real judgment
+        _, d = post('/adjudicate', {'artifact': 'STUB:AT', 'lens': 'hypotheses-default'})
+        check('a real judgment uses ITS lens bar (85%, not 95%)',
+              '85%' in d['record'] and '95%' not in d['record'], d['record'][:80])
+    finally:
+        srv.shutdown()
+        drop_cfg('f24-stub')
+
+
 # ── 3. Source posture ───────────────────────────────────────────────────────
 def source_tests():
     section('Source — the floor is demoted and cannot approve')
@@ -433,6 +582,7 @@ def main():
 
     parser_tests()
     live_tests()
+    verdict_tests()
     source_tests()
 
     section('Cleanup')

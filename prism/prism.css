@@ -411,6 +411,24 @@
     font-size: 11.5px; color: var(--text-secondary); font-style: italic;
     align-self: center;
   }
+  /* ── F24: the agent's clarity judgment ─────────────────────────────── */
+  /* Shown ABOVE the structural verdict, because it is what decided the
+     step. The floor below it is a hint, and says so. */
+  .wf-judge {
+    margin: 0 0 10px; padding: 9px 11px; border-radius: 8px;
+    font-size: 12.5px; line-height: 1.55;
+  }
+  .wf-judge em { font-style: italic; color: var(--text-secondary); }
+  .wf-judge-at        { background: rgba(34,197,94,.10);  border: 1px solid rgba(34,197,94,.35); }
+  .wf-judge-below     { background: rgba(234,179,8,.10);  border: 1px solid rgba(234,179,8,.35); }
+  .wf-judge-uncertain { background: rgba(99,102,241,.10); border: 1px solid rgba(99,102,241,.35); }
+  .wf-judge-none      { background: rgba(148,163,184,.10);border: 1px solid rgba(148,163,184,.35); }
+  .wf-judge-gaps { margin-top: 8px; font-size: 11.5px; color: var(--text-secondary);
+                   text-transform: uppercase; letter-spacing: .04em; }
+  .wf-judge-questions { margin: 5px 0 0 18px; padding: 0; font-size: 12.5px; }
+  .wf-judge-questions li { margin: 3px 0; }
+  .wf-verify-floor-note { margin-top: 7px; font-size: 11px; font-style: italic;
+                          color: var(--text-secondary); }
   .wf-stage-saved { font-size: 11.5px; color: #a6e3a1; }
   /* ── F2 verification verdict card (lenscraft/04, GN-009) ─────────────── */
   .wf-verify { margin-top: 10px; border-radius: 10px; overflow: hidden;
