@@ -12,7 +12,7 @@
 //
 // SETUP (same as F22/F24):
 //   export PRISM_TEST_KEY="sk-test-FAKE-not-a-real-key"
-//   export SSL_CERT_FILE=/tmp/fake-cert.pem
+//   export SSL_CERT_FILE=scripts/lib/fake-cert.pem
 //   ./scripts/start.sh
 //   python3 scripts/lib/loop_stub_agent.py &     <- the stub this suite needs
 
@@ -26,13 +26,16 @@ import { launch } from './lib/cdp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
+const LIB = path.join(__dirname, 'lib');
 const API = process.env.PRISM_API || 'http://127.0.0.1:8082';
 const FRONT = process.env.PRISM_URL || 'http://127.0.0.1:8090';
+// Repo-relative cert fixture. A /tmp default only works on the box that
+// generated it, so the suite silently failed anywhere else.
+const CERT = process.env.F24_CA_FILE || path.join(LIB, 'fake-cert.pem');
+const KEY = process.env.F24_KEY_FILE || path.join(LIB, 'fake-key.pem');
 const ADIR = path.join(ROOT, 'prism', 'vault', 'knowledge', 'integrations', 'agentic');
 const STUB_PORT = Number(process.env.LOOP_STUB_PORT || 8400);
 const CFG = path.join(ADIR, 'f25-loopstub.md');
-const CERT = process.env.F24_CA_FILE || '/tmp/fake-cert.pem';
-const KEY = process.env.F24_KEY_FILE || '/tmp/fake-key.pem';
 
 let pass = 0, fail = 0;
 const section = (s) => console.log('\n' + s);

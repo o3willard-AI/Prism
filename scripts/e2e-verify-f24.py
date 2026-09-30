@@ -4,15 +4,19 @@ is recorded.
 
 SETUP — same as F22, because this suite talks to a fake agent over TLS:
 
-    export PRISM_TEST_KEY="sk-test-FAKE-not-a-real-key"
-    export SSL_CERT_FILE=/tmp/fake-cert.pem
+    export PRISM_TEST_KEY="«redacted:sk-…»"
+    export SSL_CERT_FILE=scripts/lib/fake-cert.pem
     ./scripts/start.sh
 
-    openssl req -x509 -newkey rsa:2048 -keyout /tmp/fake-key.pem \\
-        -out /tmp/fake-cert.pem -days 2 -nodes -subj "/CN=127.0.0.1" \\
+A self-signed cert for 127.0.0.1 is committed at scripts/lib/fake-cert.pem
+(+ fake-key.pem) so the suite runs on a fresh checkout with no /tmp state. To
+regenerate it:
+
+    openssl req -x509 -newkey rsa:2048 -keyout scripts/lib/fake-key.pem \\
+        -out scripts/lib/fake-cert.pem -days 3650 -nodes -subj "/CN=127.0.0.1" \\
         -addext 'subjectAltName=IP:127.0.0.1,DNS:localhost'
 
-The suite reads its CA from F24_CA_FILE (or /tmp/fake-cert.pem), NOT from
+The suite reads its CA from F24_CA_FILE (or scripts/lib/fake-cert.pem), NOT from
 SSL_CERT_FILE — that variable is already set to a certifi bundle in many
 environments, and trusting it makes every handshake fail while the agent is
 perfectly healthy. A test bug that looks exactly like a product bug.
@@ -40,15 +44,18 @@ sys.path.insert(0, os.path.join(ROOT, 'prism'))
 
 import adjudicate as A  # noqa: E402
 
-API = 'http://127.0.0.1:8082'
+API = os.environ.get('PRISM_API', 'http://127.0.0.1:8082')
 ADIR = os.path.join(ROOT, 'prism', 'vault', 'knowledge', 'integrations', 'agentic')
-LOG = '/tmp/fake-adj-f24.log'
+LOG = os.environ.get('F24_LOG', '/tmp/fake-adj-f24.log')
+# Shared harness pieces, resolved from THIS file rather than from a fixed
+# checkout path or a /tmp default that only exists on one machine.
+LIB = os.path.join(ROOT, 'scripts', 'lib')
 
 # The fake agent's CA. NOT read from SSL_CERT_FILE: that variable is already
 # set to a certifi bundle in many environments, so trusting it here points the
 # test at the wrong CA and every handshake fails while the agent is healthy.
 # Set F24_CA_FILE when the cert lives somewhere unusual.
-CERT = os.environ.get('F24_CA_FILE', '/tmp/fake-cert.pem')
+CERT = os.environ.get('F24_CA_FILE', os.path.join(LIB, 'fake-cert.pem'))
 
 PASS = FAIL = 0
 
@@ -94,7 +101,7 @@ def start_agent(port, mode):
     import ssl
     # The same value Prism's own restart uses, so the server and this test
     # agree on which CA to trust.
-    cafile = os.environ.get('F24_CA_FILE') or '/tmp/fake-cert.pem'
+    cafile = os.environ.get('F24_CA_FILE') or CERT
     ctx = ssl.create_default_context(cafile=cafile)
     for _ in range(80):
         if p.poll() is not None:
