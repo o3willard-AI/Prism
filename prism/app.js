@@ -2901,6 +2901,17 @@ async function _wfAdjudicate(userText, shape) {
 // a human can disagree with the judgment, which they cannot do if they cannot
 // see it.
 function _wfJudgmentSummary(res) {
+  // Why THIS agent judged this lens, when the answer is not the obvious one.
+  // An explicit route needs no commentary. A fallback or an unclaimed lens
+  // does: F26 writes the judge into every artifact, so an arbitrary judge
+  // became legible — this makes it correctable without a file edit to find out.
+  // Declared first because the unjudged branch needs it too, and that is
+  // precisely the case a wrong route produces.
+  const sel = (res && res.selection) || {};
+  const route = (sel.selection === 'fallback' || sel.selection === 'unclaimed')
+    ? `<div class="wf-judge-route">🧭 <strong>Routing:</strong> ${escHtml(sel.why || '')}</div>`
+    : '';
+
   if (!res || res.ok === false) {
     return `<div class="wf-judge wf-judge-none">`
       + `⚠️ <strong>Nothing was judged.</strong> `
@@ -2913,6 +2924,7 @@ function _wfJudgmentSummary(res) {
       + `⚠️ <strong>Unjudged — nobody was asked.</strong> `
       + escHtml(res.agent_error || 'No agent integration is configured.')
       + ` The structural check below is a floor only; it cannot approve an artifact.`
+      + route
       + `</div>`;
   }
 
@@ -2926,6 +2938,7 @@ function _wfJudgmentSummary(res) {
       + `✅ <strong>At threshold.</strong> `
       + `${escHtml(who)} judged this at ${thr}%${conf}. `
       + (j.reasoning ? `<em>${escHtml(j.reasoning)}</em>` : '')
+      + route
       + `</div>`;
   }
   if (res.verdict === 'below_threshold') {
@@ -2936,6 +2949,7 @@ function _wfJudgmentSummary(res) {
       + `${escHtml(who)} judged this at ${thr}%${conf}. `
       + (j.reasoning ? `<em>${escHtml(j.reasoning)}</em>` : '')
       + (qs ? `<div class="wf-judge-gaps">Gaps it identified — answer these and it re-runs:</div><ul class="wf-judge-questions">${qs}</ul>` : '')
+      + route
       + `</div>`;
   }
   // uncertain, or a reply we could not parse.
@@ -3083,6 +3097,10 @@ async function _wfApplyAccepted(v, userText) {
         let out = `\n\n**Clarity:** ${label} — judged at ${thrVal}% threshold`
           + (J.confidence ? ` (agent confidence ${J.confidence}%)` : '');
         out += `\n**Judged by:** ${who} — ${J.reasoning || 'no reasoning returned'}`;
+        // The routing line is in the SERVER's record already (format_for_record
+        // takes the selection), and the block below is written verbatim, so
+        // there is deliberately nothing added here. A second formatter is how
+        // the artifact and the on-screen card drifted apart in F26.
         if (J.questions && J.questions.length) {
           out += '\n\n**Gaps the agent identified at the time:**';
           for (const q of J.questions) out += `\n- ${q}`;
