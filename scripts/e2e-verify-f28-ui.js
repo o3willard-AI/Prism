@@ -6,7 +6,9 @@
 // screen. This drives the real app with an UNCLAIMED lens, which is the case
 // that produces the note, and checks both the text and the computed style.
 //
-// Requires the loop stub agent: start it with `python3 scripts/lib/loop_stub_agent.py`.
+// Self-contained: it starts the stub agent itself via scripts/lib/stub-agent.js
+// and tears it down by port in a finally. It used to assume a human had
+// started one, which is why the test runner had to do it from outside.
 // Does the routing note actually RENDER? The API tests prove the field exists;
 // only a browser proves the human sees it. It also reads the computed style,
 // because "the class is in the DOM" and "a person can read it, and it stays
@@ -16,6 +18,7 @@
 const env = require('./lib/env.js');
 const { ROOT, FRONT, STUB_ENDPOINT } = env;
 const { launch } = require('./lib/cdp.js');
+const { startStub, freePort } = require('./lib/stub-agent.js');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -30,12 +33,22 @@ const check = (n, c, d) => {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 (async () => {
+  // Start the stub first: the config written below must name the endpoint
+  // the live process is actually serving.
+  let stub;
+  try {
+    stub = await startStub();
+  } catch (e) {
+    console.error('  CANNOT START the loop stub agent — ' + e.message);
+    process.exit(2);
+  }
+
   // A config that claims only the UX lens, so the requirements lens is
   // UNCLAIMED -> the unjudged card must carry the routing note.
   fs.writeFileSync(CFG,
     '# f28 ui probe\n\n**Title:** UX Judge\n**Status:** active\n' +
     '**Lenses:** ux-bridge-default\n**Kind:** openai\n' +
-    `**Endpoint:** ${STUB_ENDPOINT}\n**Model:** stub\n**Auth env:** PRISM_TEST_KEY\n`);
+    `**Endpoint:** ${stub.endpoint}\n**Model:** stub\n**Auth env:** PRISM_TEST_KEY\n`);
 
   const b = await launch();
   const page = await b.newPage();
@@ -100,6 +113,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         try { fs.unlinkSync(path.join(dir, f)); } catch (e) {}
       }
     }
+    freePort(env.STUB_PORT);
     try { fs.unlinkSync(CFG); } catch (e) {}
   }
   console.log(`\n${pass}/${pass + fail} checks passed`);
