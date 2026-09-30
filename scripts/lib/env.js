@@ -118,13 +118,16 @@ function requireEnv(name, value, hint) {
 
 // A freshness probe: confirm a service is up before asserting against it, so a
 // missing server is one line instead of forty failures that all look like
-// product defects.
+// product defects. The probe path is /workflows, NOT /healthz — the API has no
+// /healthz endpoint and 404s one, so probing it would report every healthy
+// server as down. A 404 still proves something is listening, which is all this
+// is for.
 function assertServiceUp(url, label) {
   const req = require('node:http');
   const u = new URL(url);
   return new Promise((resolve) => {
     const r = req.request(
-      { host: u.hostname, port: u.port, path: '/healthz', method: 'GET', timeout: 1500 },
+      { host: u.hostname, port: u.port, path: '/workflows', method: 'GET', timeout: 1500 },
       (res) => { res.resume(); resolve(!!res.statusCode); });
     r.on('error', () => resolve(false));
     r.on('timeout', () => { r.destroy(); resolve(false); });
@@ -153,6 +156,92 @@ module.exports = {
   STUB_HOST, STUB_PORT, STUB_ENDPOINT,
   FAKE_AGENT_BASE_PORT, FAKE_AGENT_LOG, F24_LOG, DECLARED,
   requireEnv, pick, num, pickEnv: pick,
-  assertServiceUp,
+  assertServiceUp, preflightTls, assertAgentReachable,
   nodeMajor: Number(process.versions.node.split('.')[0]),
 };
+
+// The preflight every TLS-touching suite calls before it starts.
+//
+// A fresh-clone run of the loop suites produced 26 confusing failures because
+// the SERVER had been started without SSL_CERT_FILE pointing at the committed
+// fixture. Every judgment came back `unjudged` with a CERTIFICATE_VERIFY_FAILED
+// buried in the agent_error payload, so the symptom pointed at Prism's
+// adjudication rather than at one missing environment variable.
+//
+// This cannot see the server's own environment — our process and the server are
+// different processes — so it checks what it can (the fixture exists, the key
+// var is set here) and then ASKS the server, which is the only thing that knows
+// whether it can reach a configured agent. Returns a list of human sentences;
+// empty means ready.
+function preflightTls() {
+  const problems = [];
+  if (!process.env.PRISM_TEST_KEY) {
+    problems.push(
+      'The Prism SERVER was likely started without PRISM_TEST_KEY, so agentic.py '
+      + 'cannot resolve a key and every call fails with "No API key found".');
+  }
+  if (!fs.existsSync(FAKE_CERT)) {
+    problems.push(`The fake agent's certificate is missing at ${FAKE_CERT}.`);
+  }
+  return problems;
+}
+
+// Ask the server whether it can actually reach a configured agent, and report
+// its own error text if not. This is the check that catches the SSL_CERT_FILE
+// case, because the failure is only visible from inside the server process.
+//
+// It asks /adjudicate rather than /agent-configs on purpose. /agent-configs
+// validates CONFIG and reports `error: null` for a perfectly well-formed config
+// whose agent cannot be reached -- which is exactly the untrusted-cert case, so
+// asking it here reported "fine" while every judgment came back unjudged. The
+// server's own `agent_error` is the only honest signal, and only /adjudicate
+// produces one.
+function assertAgentReachable() {
+  return new Promise((resolve) => {
+    const body = JSON.stringify({
+      lens: 'requirements-default',
+      artifact: '# PRD\n\n## Executive Summary\npreflight\n',
+      threshold: 95,
+    });
+    const u = new URL('/adjudicate', API);
+    const req = require('node:http').request(
+      {
+        host: u.hostname, port: u.port, path: u.pathname, method: 'POST',
+        headers: { 'Content-Type': 'application/json',
+                   'Content-Length': Buffer.byteLength(body) },
+        timeout: 8000,
+      },
+      (res) => {
+        let raw = '';
+        res.on('data', (d) => { raw += d; });
+        res.on('end', () => {
+          let j = null;
+          try { j = JSON.parse(raw); } catch (e) { /* fall through */ }
+          // "No agent integration is configured" is a LEGITIMATE state, not a
+          // fault — the server is answering correctly. Only a real transport or
+          // protocol failure is a setup problem, so only that aborts.
+          const notConfigured = j && j.asked === false
+            && /no agent integration/i.test(j.agent_error || '');
+          if (j && j.agent_error && !notConfigured) {
+            const hint = [
+              '',
+              `  The agent could not be reached: ${j.agent_error}`,
+              '',
+              '  If this is the local fake agent, the SERVER must be started with:',
+              `    SSL_CERT_FILE=${FAKE_CERT}`,
+              '  A self-signed cert the server does not trust produces',
+              '  CERTIFICATE_VERIFY_FAILED, which surfaces as `unjudged` on every',
+              '  artifact and otherwise reads like an adjudication bug.',
+              '',
+            ].join('\n');
+            console.error(hint);
+            process.exit(2);
+          }
+          resolve(true);
+        });
+      });
+    req.on('error', () => resolve(true));   // no server: assertServiceUp reports that
+    req.on('timeout', () => { req.destroy(); resolve(true); });
+    req.end(body);
+  });
+}
