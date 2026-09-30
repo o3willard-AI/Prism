@@ -15,12 +15,21 @@
 //      issued more than one) and it assumed the first paste is a PRD when the
 //      first step is intent-synth. Both are the classic "assert on whatever is
 //      on screen" mistake.
-const { launch } = require('/home/sblanken/workspace/Prism/scripts/lib/cdp.js');
+const { launch } = require('./lib/cdp.js');
 const fs = require('node:fs');
 const path = require('node:path');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const ROOT = '/home/sblanken/workspace/Prism';
-const FRONT = 'http://127.0.0.1:8090';
+// Derive the repo root from this file, and the target from the environment —
+// the same way F25 does. Hardcoding one developer's checkout made this suite
+// unrunnable anywhere else, which is not a property a test is allowed to have.
+const ROOT = path.join(__dirname, '..');
+const FRONT = process.env.PRISM_URL || 'http://127.0.0.1:8090';
+// The stub's own port. This suite starts and owns it, so a default is correct —
+// but name it once and let the environment move it, so a busy box does not
+// turn into a false failure. The name must match what loop_stub_agent.py
+// reads, or the two silently disagree and the override is a lie.
+const STUB_PORT = process.env.PRISM_STUB_PORT || process.env.STUB_PORT || '8400';
+const STUB_HOST = process.env.PRISM_STUB_HOST || '127.0.0.1';
 const ADIR = path.join(ROOT, 'prism', 'vault', 'knowledge', 'integrations', 'agentic');
 // This suite is the ONLY thing that should ever arm an agent config in the
 // vault. It installs walkstub.md in setup and removes it in teardown — an
@@ -33,7 +42,7 @@ const STUB_BODY = [
   '**Title:** Stub Adjudicator',
   '**Status:** active',
   '**Kind:** openai',
-  '**Endpoint:** https://127.0.0.1:8400/v1/chat/completions',
+  '**Endpoint:** https://' + STUB_HOST + ':' + STUB_PORT + '/v1/chat/completions',
   '**Model:** stub',
   '**Auth env:** PRISM_TEST_KEY',
   '',
@@ -113,13 +122,18 @@ const GOOD_PRD = [
   // stale logic and the walkthrough then fails for reasons that have nothing
   // to do with Prism.
   const { execSync, spawn } = require('node:child_process');
-  execSync('bash scripts/lib/free-port.sh 8400', { cwd: ROOT, stdio: 'inherit' });
+  execSync(`bash scripts/lib/free-port.sh ${STUB_PORT}`, { cwd: ROOT, stdio: 'inherit' });
   fs.writeFileSync(STUB, STUB_BODY);
   // Detached and unref'd: the stub outlives this process, and teardown kills it
   // BY PORT rather than by handle, which is the only way that actually works
-  // when a previous run is what bound the port.
-  const stubProc = spawn('python3', ['scripts/lib/loop_stub_agent.py'],
-                         { cwd: ROOT, detached: true, stdio: 'ignore' });
+  // when a previous run is what bound the port. STUB_PORT is forwarded under
+  // the name the stub reads, so an override moves the process AND the armed
+  // config together — setting it in one place only is how you get a config
+  // pointing at a port nobody is listening on.
+  const stubProc = spawn('python3', ['scripts/lib/loop_stub_agent.py'], {
+    cwd: ROOT, detached: true, stdio: 'ignore',
+    env: { ...process.env, STUB_PORT, STUB_HOST },
+  });
   stubProc.unref();
   await sleep(1500);   // let it bind before the workflow asks it anything
 
@@ -255,7 +269,7 @@ const GOOD_PRD = [
     // The armed config MUST go, or F15 and F24 fail on the next run. Leaving
     // test scaffolding in the vault is the residue this repo does not accept.
     try { fs.unlinkSync(STUB); } catch (e) { /* already gone */ }
-    try { execSync('bash scripts/lib/free-port.sh 8400', { cwd: ROOT, stdio: 'ignore' }); }
+    try { execSync(`bash scripts/lib/free-port.sh ${STUB_PORT}`, { cwd: ROOT, stdio: 'ignore' }); }
     catch (e) { /* port already free */ }
     for (const d of ['requirements', 'hypotheses', 'rationalizations', 'source/unordereds']) {
       const dir = path.join(ROOT, 'prism', 'vault', d);

@@ -4,7 +4,7 @@ SETUP — the suite needs a SERVER started with two environment variables, and
 without them it fails for reasons that look like product bugs:
 
     export PRISM_TEST_KEY="sk-test-FAKE-not-a-real-key"
-    export SSL_CERT_FILE=/tmp/fake-cert.pem      # trust the fake agent's cert
+    export SSL_CERT_FILE=scripts/lib/fake-cert.pem   # trust the fake agent's cert
     ./scripts/start.sh
 
 `PRISM_TEST_KEY` because agentic.py resolves a key from the *server's*
@@ -16,9 +16,10 @@ found", which reads like a broken product rather than a missing test var.
 http:// endpoint — correctly, since that would put the key on the wire in the
 clear — so the suite must trust the fake agent's self-signed cert.
 
-Generate the cert once:
-    openssl req -x509 -newkey rsa:2048 -keyout /tmp/fake-key.pem \\
-        -out /tmp/fake-cert.pem -days 2 -nodes -subj "/CN=127.0.0.1" \\
+A self-signed cert for 127.0.0.1 is committed at scripts/lib/fake-cert.pem
+(+ fake-key.pem), so a fresh checkout needs no /tmp setup. To regenerate:
+    openssl req -x509 -newkey rsa:2048 -keyout scripts/lib/fake-key.pem \\
+        -out scripts/lib/fake-cert.pem -days 3650 -nodes -subj "/CN=127.0.0.1" \\
         -addext 'subjectAltName=IP:127.0.0.1,DNS:localhost'
 
 If you see "No API key found" or "certificate verify failed" in the output,
@@ -39,10 +40,14 @@ from pathlib import Path
 ROOT = str(Path(__file__).resolve().parent.parent)
 sys.path.insert(0, os.path.join(ROOT, 'prism'))
 
-API = 'http://127.0.0.1:8082'
+API = os.environ.get('PRISM_API', 'http://127.0.0.1:8082')
 AGENT_DIR = ROOT + '/prism/vault/knowledge/integrations/agentic'
-LOG = '/tmp/fake-agent.log'
+LOG = os.environ.get('FAKE_AGENT_LOG', '/tmp/fake-agent.log')
 BASE_PORT = int(os.environ.get('FAKE_AGENT_PORT', '8100'))
+# A self-signed 127.0.0.1 cert is committed at scripts/lib/fake-cert.pem so the
+# suite runs on a fresh checkout with no /tmp state left over from a previous
+# machine. Override with FAKE_AGENT_CERT.
+CERT = os.environ.get('FAKE_AGENT_CERT', os.path.join(ROOT, 'scripts', 'lib', 'fake-cert.pem'))
 
 PASS = FAIL = 0
 
@@ -89,7 +94,7 @@ def preflight():
                 'The Prism SERVER has no PRISM_TEST_KEY in its environment. '
                 'Set it and RESTART the server:\n'
                 '    export PRISM_TEST_KEY="sk-test-FAKE-not-a-real-key"\n'
-                '    export SSL_CERT_FILE=/tmp/fake-cert.pem\n'
+                '    export SSL_CERT_FILE=scripts/lib/fake-cert.pem\n'
                 '    ./scripts/start.sh\n'
                 '(Exporting it after startup does nothing — agentic.py reads '
                 'the key from the server process at call time.)')
@@ -100,14 +105,15 @@ def preflight():
             pass
 
     # 3. Is the fake agent's cert present and trusted?
-    cert = os.environ.get('SSL_CERT_FILE', '/tmp/fake-cert.pem')
+    cert = os.environ.get('SSL_CERT_FILE', CERT)
     if not os.path.exists(cert):
         problems.append(
-            f'No fake-agent certificate at {cert}. Generate it:\n'
-            "    openssl req -x509 -newkey rsa:2048 -keyout /tmp/fake-key.pem \\\n"
-            "        -out /tmp/fake-cert.pem -days 2 -nodes -subj '/CN=127.0.0.1' \\\n"
+            f'No fake-agent certificate at {cert}. One is committed at '
+            f'{CERT}, so a fresh checkout needs no setup; regenerate it with:\n'
+            "    openssl req -x509 -newkey rsa:2048 -keyout scripts/lib/fake-key.pem \\\n"
+            "        -out scripts/lib/fake-cert.pem -days 3650 -nodes -subj '/CN=127.0.0.1' \\\n"
             "        -addext 'subjectAltName=IP:127.0.0.1,DNS:localhost'\n"
-            '    export SSL_CERT_FILE=/tmp/fake-cert.pem   # before starting Prism')
+            '    export SSL_CERT_FILE=scripts/lib/fake-cert.pem   # before starting Prism')
     return problems
 
 def check(name, cond, detail=''):
@@ -135,7 +141,7 @@ def start_agent(port, mode):
                          stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     _running.append(p)
     import ssl
-    ctx = ssl.create_default_context(cafile='/tmp/fake-cert.pem')
+    ctx = ssl.create_default_context(cafile=CERT)
     for _ in range(80):
         if p.poll() is not None:
             raise RuntimeError(f'fake agent({mode}) on {port} exited early')

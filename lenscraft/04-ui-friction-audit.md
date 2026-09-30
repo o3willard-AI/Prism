@@ -1044,6 +1044,45 @@ A hollow PRD — every required heading, `TBD` behind each one, and a line
 claiming "scope clarity confirmed 95%" — matches the shape, is judged below
 threshold, opens the loop, and the revised artifact records *who cleared it*.
 
+**Test-hygiene sweep (reviewer-caught).** F26 shipped with the reviewer's own box
+baked in — `ROOT = '/home/sblanken/workspace/Prism'`, a hardcoded
+`http://127.0.0.1:8090`, and an absolute `require('/home/.../lib/cdp.js')` —
+while F25 in the same directory already did the right thing with `__dirname` and
+`process.env.PRISM_URL`. A test that only runs on one machine is not a test.
+Three lines fixed it, and the same sweep found the same class of assumption
+three more times:
+
+| was | now |
+|---|---|
+| `require('/home/.../cdp.js')` | `require('./lib/cdp.js')` |
+| hardcoded `ROOT` | `path.join(__dirname, '..')` |
+| hardcoded `FRONT` | `process.env.PRISM_URL \|\| default` |
+| stub port inlined 3× | `PRISM_STUB_PORT`, forwarded to the child so config and process move together |
+| `cafile='/tmp/fake-cert.pem'` in F22, F24, F25, F26, `fake_agent.py` | committed fixture at `scripts/lib/fake-cert.pem` |
+
+**The cert default was the worse one.** A `/tmp` path works on the box that
+generated it and fails everywhere else — the same non-portable assumption, just
+harder to see because the suite *passes* locally. A self-signed cert for
+`127.0.0.1` is now committed, with the regeneration command in the F22 and F24
+docstrings. `.gitignore` carries a note saying the key is committed on purpose:
+a generic `*.pem` ignore would silently break four suites on every machine that
+isn't this one, which is the exact failure being fixed.
+
+**The one that would have shipped as a lie:** F26's `STUB_PORT` override changed
+the *armed config's* endpoint but never reached the spawned stub, because
+`loop_stub_agent.py` reads a differently-named variable. Anyone setting
+`PRISM_STUB_PORT` would get a config pointing at a port nobody was listening on
+and a baffling handshake failure. Both sides now read the same name, and the
+suite forwards it explicitly.
+
+**Portability is tested, not claimed.** The whole TLS set was re-run from a copy
+at `/tmp/portable`, with `/tmp/fake-*.pem` deleted, against a server started
+there: **F24 132/132, F25 44/44, F26 35/35, zero residue.** Getting that run
+honest also cost a fifth appearance of the stale-server lesson — a leftover
+server on 8082 answered the first attempt with pre-change code, so the
+portability test was passing against the wrong binary. Freed both ports by
+number.
+
 ---
 
 ## The pattern in both columns

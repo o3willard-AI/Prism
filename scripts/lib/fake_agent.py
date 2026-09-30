@@ -89,10 +89,14 @@ if __name__ == "__main__":
     # speak real https to prove the happy path, which is the point: the guard
     # is not something the suite can route around.
     import ssl
+    # Repo-relative cert fixtures by default, so the harness runs on a fresh
+    # checkout rather than depending on /tmp state from another machine. The
+    # variable name matches e2e-verify-f22.py's, which trusts the same file.
+    here = os.path.dirname(os.path.abspath(__file__))
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(
-        os.environ.get("FAKE_AGENT_CERT", "/tmp/fake-cert.pem"),
-        os.environ.get("FAKE_AGENT_KEY", "/tmp/fake-key.pem"),
+        os.environ.get("FAKE_AGENT_CERT", os.path.join(here, "fake-cert.pem")),
+        os.environ.get("FAKE_AGENT_KEY", os.path.join(here, "fake-key.pem")),
     )
 
     # Threaded, NOT single-threaded. A single-threaded HTTPServer handles one

@@ -33,3 +33,9 @@ __pycache__/
 # ── Local secrets ───────────────────────────────────────────
 .env
 *.credentials
+
+# NOTE: scripts/lib/fake-key.pem IS committed, on purpose. It is a throwaway
+# self-signed key for a localhost test double, with no production use, and
+# committing it is what lets the TLS suites run on a fresh checkout with no
+# /tmp state. A generic *.pem ignore here would silently break F22/F24/F25/F26
+# on every other machine, which is the exact failure this file is fixing.

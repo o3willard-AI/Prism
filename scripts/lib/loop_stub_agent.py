@@ -2,7 +2,15 @@
 below_threshold the second, keyed on a marker in the artifact."""
 import json, os, socket, ssl, sys, threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from socketserver import ThreadingMixIn
+
+HERE = Path(__file__).resolve().parent
+# Repo-relative cert fixtures by default. A /tmp default works only on the box
+# that generated it, which is the same non-portable assumption as a hardcoded
+# checkout path. Override with F24_CA_FILE / F24_KEY_FILE when needed.
+DEFAULT_CERT = str(HERE / 'fake-cert.pem')
+DEFAULT_KEY = str(HERE / 'fake-key.pem')
 
 PORT = int(os.environ.get('STUB_PORT', '8400'))
 
@@ -48,11 +56,12 @@ class S(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
 
 if __name__ == '__main__':
+    HOST = os.environ.get('STUB_HOST', '127.0.0.1')
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(
-        os.environ.get('F24_CA_FILE', '/tmp/fake-cert.pem'),
-        os.environ.get('F24_KEY_FILE', '/tmp/fake-key.pem'))
-    srv = S(('127.0.0.1', PORT), H)
+        os.environ.get('F24_CA_FILE', DEFAULT_CERT),
+        os.environ.get('F24_KEY_FILE', DEFAULT_KEY))
+    srv = S((HOST, PORT), H)
     srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
-    print(f'stub agent on {PORT}', flush=True)
+    print(f'stub agent on {HOST}:{PORT}', flush=True)
     srv.serve_forever()
