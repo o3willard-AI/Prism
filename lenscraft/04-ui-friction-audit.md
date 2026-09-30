@@ -986,6 +986,64 @@ same file: the question-count assertion counted across the whole thread, so it
 passed or failed depending on how many judgment cards happened to be on screen.
 Scoped to the card under test.
 
+### F26 — the human walkthrough: what a real pass-through reveals ✅ pending review 30 Sep 2026
+F25 proved the loop works. It proved it by calling the same internals a test
+would. This drives the flow the way a person does — type into the desk, click
+a lens door, read, answer, send — and it found two things no unit-level suite
+had.
+
+**1. The artifact recorded the bar but not the judgment.** F23 writes
+`Confidence threshold: 95%` into every artifact. F25's wiring added the
+judgment block — and it never appeared. The cause was one line:
+
+```js
+_wfAdvanceVerified(v, userText);   // v = the FLOOR object
+```
+
+`v` was the structural-match result, captured *before* `/adjudicate` ran. The
+judgment lived on a wrapper object that was pushed onto `_chat.messages` and
+then discarded. So `_wfApplyAccepted` read `v.judgment`, found `undefined`, and
+wrote an artifact that said *what bar this was judged against* but not *who
+judged it or why* — which is the part that makes a past artifact auditable
+rather than merely dated. Fixed by passing the card:
+
+```js
+_wfAdvanceVerified(card, userText);  // card carries .judgment
+```
+
+**2. A client-side fallback was masking a broken server response.** My first fix
+reformatted the record locally when `v.judgment.record` was absent. The teeth
+check then showed the suite passing 32/32 with `record` deliberately nulled on
+the server — the fallback quietly reconstructed what the test meant to prove
+was missing. Two formatters for one concept is exactly how they drift. F26 now
+asserts the server's own string *and* that the artifact contains it verbatim,
+and the client keeps the fallback only for the Accept-anyway door (where the
+card carries a judgment the server never scored).
+
+**3. The stale-stub lesson, fourth appearance.** A leftover `loop_stub_agent`
+on :8400 answered every request with the previous run's mode, so the
+walkthrough judged the good revision as below-threshold. Root cause is always
+the same: killing by PID misses a process that a *previous* run bound. F26 now
+calls `scripts/lib/free-port.sh 8400` before it starts and again in teardown,
+installs its armed config itself, and removes it in `finally` — because an
+active config left in the vault fails F15 ("integrations/ holds no ACTIVE
+service") and F24 ("with no integration, nothing is judged") on the *next* run,
+which is how both showed up as unexplained regressions.
+
+**Two of my own assertions were wrong** and are worth recording, because both
+are the standard trap: the walkthrough read `verify` via `slice(-1)`, which is
+a *different* shape's card once a workflow issues more than one, and it
+assumed the first paste is a PRD when the first step is `intent-synth`. It also
+asserted the artifact contained "under 1" — a phrase I had invented from memory
+of a fixture. Every one of these produced a confident FAIL pointing at Prism.
+Scope assertions to the shape, and assert only on strings that are actually in
+the fixture.
+
+**Result:** 35/35, and both mutations are caught (4 failures and 2 failures).
+A hollow PRD — every required heading, `TBD` behind each one, and a line
+claiming "scope clarity confirmed 95%" — matches the shape, is judged below
+threshold, opens the loop, and the revised artifact records *who cleared it*.
+
 ---
 
 ## The pattern in both columns

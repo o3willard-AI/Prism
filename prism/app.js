@@ -2731,21 +2731,24 @@ async function _wfVerifyPasted(userText, shape) {
   // explain WHY — the judgment, the reason, and the agent's own confidence.
   const judgedClear = res.ok && res.asked && res.verdict === 'at_threshold';
 
-  _chat.messages.push({
-    role: 'agent', text: '', attachments: [],
-    verify: {
-      ...v, shape, msgIdx: idx,
-      accepted: false,
-      judgment: res,
-      // done means "the step has moved on". Only a clear judgment does that
-      // on its own.
-      done: judgedClear,
-      clarity: res.verdict,
-    },
-  });
+  const card = {
+    ...v, shape, msgIdx: idx,
+    accepted: false,
+    judgment: res,
+    // done means "the step has moved on". Only a clear judgment does that
+    // on its own.
+    done: judgedClear,
+    clarity: res.verdict,
+  };
+  _chat.messages.push({ role: 'agent', text: '', attachments: [], verify: card });
 
   if (judgedClear) {
-    _wfAdvanceVerified(v, userText);
+    // Pass the CARD, not the bare floor object. _wfApplyAccepted reads
+    // v.judgment to record the agent, its confidence, and its reasoning in
+    // the artifact; passing the pre-adjudication object silently lost all
+    // three, so a past artifact recorded the threshold but not who cleared
+    // it. F26's human walkthrough is what caught this.
+    _wfAdvanceVerified(card, userText);
   } else if (res.ok && res.asked && res.verdict === 'below_threshold'
              && (res.judgment.questions || []).length) {
     // F24: the loop. The agent named specific gaps; show them and open the
@@ -3041,11 +3044,11 @@ async function _wfApplyAccepted(v, userText) {
       .replace(/\*\*Status:\*\*.*/i, `**Status:** ${nextStatus}`)
       .replace(/\*\*Last updated:\*\*.*/i, `**Last updated:** ${today}`);
     const sectionLabel = ({
-      'prd-gate': '## PRD (agent output, structure verified by Prism)',
-      'structured-account': '## Structured Account (agent output, structure verified by Prism)',
-      'hypothesis-brief': '## Hypothesis brief (agent output, structure verified by Prism)',
-      'ux-handoff-spec': '## UX Hand-off Specification (agent output, structure verified by Prism)',
-    })[v.shape] || '## Agent output (structure verified by Prism)';
+      'prd-gate': '## PRD (agent output, judged by the agent, shape-checked by Prism)',
+      'structured-account': '## Structured Account (agent output, judged by the agent, shape-checked by Prism)',
+      'hypothesis-brief': '## Hypothesis brief (agent output, judged by the agent, shape-checked by Prism)',
+      'ux-handoff-spec': '## UX Hand-off Specification (agent output, judged by the agent, shape-checked by Prism)',
+    })[v.shape] || '## Agent output (judged by the agent, shape-checked by Prism)';
 
     // F23: record the bar this artifact was produced under. Months later,
     // "why is this thinner than the last one?" is answerable from the file
@@ -3057,11 +3060,50 @@ async function _wfApplyAccepted(v, userText) {
       ? _thresholdMeta.thresholds[thrLens] : null;
     const thrOrigin = thrEntry && thrEntry.source === 'config'
       ? 'set by the human' : 'Prism default';
+
+    // F25: the JUDGMENT goes into the file too — the agent, its own
+    // confidence, and its reasoning. The threshold alone records the bar; this
+    // records who cleared it and why, which is the part that makes a past
+    // artifact auditable rather than merely dated.
+    //
+    // Prefer the server's own `record` (adjudicate.format_for_record) so the
+    // artifact and the on-screen card cannot drift apart — one formatter, not
+    // two. Fall back to assembling it here for the Accept-anyway door, where
+    // the card carries a judgment the server never scored.
+    const clarityBlock = (() => {
+      if (v.judgment && v.judgment.record) return `\n\n${v.judgment.record}\n`;
+      const J = (v.judgment && v.judgment.judgment) || null;
+      if (J) {
+        const who = J.agent_title || J.agent || 'the agent';
+        const label = {
+          at_threshold: 'at threshold',
+          below_threshold: 'below threshold (accepted by the human)',
+          uncertain: 'uncertain (accepted by the human)',
+        }[J.verdict] || J.verdict;
+        let out = `\n\n**Clarity:** ${label} — judged at ${thrVal}% threshold`
+          + (J.confidence ? ` (agent confidence ${J.confidence}%)` : '');
+        out += `\n**Judged by:** ${who} — ${J.reasoning || 'no reasoning returned'}`;
+        if (J.questions && J.questions.length) {
+          out += '\n\n**Gaps the agent identified at the time:**';
+          for (const q of J.questions) out += `\n- ${q}`;
+        }
+        return out + '\n';
+      }
+      if (v.judgment && v.judgment.asked === false) {
+        return '\n\n**Clarity:** unjudged — no agent was available to assess this. '
+          + 'It was accepted on the human\'s judgement.\n';
+      }
+      return '';
+    })();
+
     const thrLine = thrVal
       ? `\n\n**Confidence threshold:** ${thrVal}% (${thrOrigin} — set before this lens began)`
       : '';
 
-    await apiPost('/file', { path: lensPath, content: `${updatedHead}\n\n${sectionLabel}${thrLine}\n\n${userText.trim()}\n` });
+    await apiPost('/file', {
+      path: lensPath,
+      content: `${updatedHead}\n\n${sectionLabel}${thrLine}${clarityBlock}\n\n${userText.trim()}\n`,
+    });
     toast(isUxSpec
       ? '✓ UX Hand-off Specification written — status set to ux-ready'
       : '✓ Output written into the lens file — status set to review');

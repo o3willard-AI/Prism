@@ -24,8 +24,15 @@ class H(BaseHTTPRequestHandler):
         try: body = json.loads(self.rfile.read(n) or b'{}')
         except ValueError: body = {}
         sent = ''.join(m.get('content', '') for m in body.get('messages', []))
-        # A PRD marker means we are judging the second artifact.
-        payload = BELOW if '## Executive Summary' in sent else AT
+        # Judge on the ARTIFACT'S OWN substance, not on a heading that appears
+        # in every PRD. An earlier version keyed on "## Executive Summary",
+        # which the hollow and the revised document both contain — so the
+        # good revision was judged below threshold and the walkthrough failed
+        # for a reason that had nothing to do with Prism.
+        #
+        # TBD is the signal: a document padded with TBD has not been written.
+        hollow = 'TBD' in sent
+        payload = BELOW if hollow else AT
         raw = json.dumps({"id": "stub", "model": "stub",
                           "choices": [{"index": 0, "finish_reason": "stop",
                                        "message": {"role": "assistant",
