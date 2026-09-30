@@ -98,6 +98,14 @@ function waitForPort(port, tls) {
     `**Kind:** openai\n**Endpoint:** https://127.0.0.1:${STUB_PORT}/v1/chat/completions\n` +
     '**Model:** stub\n**Auth env:** PRISM_TEST_KEY\n');
 
+  // Refuse BEFORE any assertion if the server cannot reach the stub. Without
+  // this the suite produced 26 failures that all read as adjudication bugs,
+  // because an untrusted self-signed cert surfaces as `unjudged` on every
+  // artifact rather than as a connection error. Order matters: the config must
+  // be armed first, or the check reports "no agent integration is configured" —
+  // which is a legitimate state, not a fault, and would abort a healthy run.
+  await env.assertAgentReachable();
+
   const browser = await launch();
   const page = await browser.newPage();
   await page.ready();

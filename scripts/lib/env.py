@@ -67,11 +67,17 @@ DECLARED = {
 
 
 def service_up(url, timeout=1.5):
-    """True if something answers on url. Used to refuse loudly, not to assert."""
+    """True if something answers on url. Used to refuse loudly, not to assert.
+
+    The probe path is the vault root, NOT /healthz: the API has no /healthz
+    endpoint and returns 404 for one, so a probe against it would report every
+    healthy server as down. A 404 still proves something is listening, which is
+    all this is for.
+    """
     import urllib.error
     import urllib.request
     try:
-        with urllib.request.urlopen(url.rstrip('/') + '/healthz', timeout=timeout) as r:
+        with urllib.request.urlopen(url.rstrip('/') + '/workflows', timeout=timeout) as r:
             return bool(r.status)
     except urllib.error.HTTPError as e:
         return bool(e.code)      # a 404 still means something is listening

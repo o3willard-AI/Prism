@@ -24,9 +24,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // unrunnable anywhere else — not a property a test is allowed to have. The stub
 // port comes from here too, so the armed config and the spawned process cannot
 // disagree about where the agent is listening.
-const {
-  ROOT, FRONT, STUB_PORT, STUB_HOST,
-} = require('./lib/env.js');
+const env = require('./lib/env.js');
+const { ROOT, FRONT, STUB_PORT, STUB_HOST } = env;
 const ADIR = path.join(ROOT, 'prism', 'vault', 'knowledge', 'integrations', 'agentic');
 // This suite is the ONLY thing that should ever arm an agent config in the
 // vault. It installs walkstub.md in setup and removes it in teardown — an
@@ -133,6 +132,13 @@ const GOOD_PRD = [
   });
   stubProc.unref();
   await sleep(1500);   // let it bind before the workflow asks it anything
+
+  // Now that the stub is up AND this suite's config is armed, ask the server
+  // whether it can actually reach it. Order matters: armed before the check, or
+  // the check has nothing to look at. A server that does not trust the stub's
+  // self-signed cert would otherwise produce ~24 failures that all read as
+  // adjudication bugs, because the failure surfaces as `unjudged`.
+  await env.assertAgentReachable();
 
   const b = await launch();
   const page = await b.newPage();
