@@ -305,27 +305,120 @@ def judge(artifact: str, lens: str, cfg: dict, skill_hint: str = "") -> dict:
     return verdict
 
 
-def default_config() -> dict | None:
-    """The first configured, keyed integration — or None.
+def usable_configs() -> list[dict]:
+    """Every integration that could actually be asked, in a stable order.
 
-    "First" is by sorted filename, which is stable and predictable. When
-    several exist, asking the human which agent should judge is a real design
-    question, and guessing is worse than being explicit about the default.
+    "Could be asked" means active, keyed, and free of a config error. A config
+    that is active but has no key is not a candidate: picking it would turn a
+    missing environment variable into an adjudicated verdict.
     """
-    candidates = [
+    return [
         a for a in agentic.list_configs()
         if a.get("status") == "active" and a.get("has_key") and not a.get("error")
     ]
+
+
+def _claims_lens(candidate: dict, lens: str) -> bool:
+    """Does this config declare that it judges `lens`?
+
+    An empty `lenses:` list means "any lens" — the original single-agent setup,
+    where one config served everything. An explicit list is a route.
+    """
+    lenses = candidate.get("lenses") or []
+    if not lenses:
+        return True
+    return lens in lenses
+
+
+def select_config(lens: str) -> tuple[dict | None, dict]:
+    """The config that should judge `lens`, and why that one.
+
+    Returns (config_or_None, reason) so the caller can put the reason in front
+    of the human. The old behaviour — first active config by filename, for
+    every lens — was a real arbitrary choice dressed up as a default: an
+    artifact was judged by whichever agent happened to sort first, and nothing
+    on screen said so. Now the `lenses:` field that every config already carried
+    is actually honoured, and when the outcome is a fallback the human is told,
+    because a silent fallback is exactly the problem being fixed.
+
+    Precedence:
+      1. a config that explicitly claims this lens
+      2. a config claiming no lens at all (the catch-all)
+      3. nothing — an unclaimed lens is NOT silently handed to an unrelated
+         agent, because a judge that was never asked for the work is not a
+         judge.
+
+    Ties within a tier break on sorted filename, so the result is stable and
+    explainable rather than dependent on directory order.
+    """
+    # The reason dict carries a mix of strings and lists depending on the tier,
+    # so it is deliberately typed as the union it is.
+    reason: dict[str, object]
+    candidates = usable_configs()
+    if not candidates:
+        return None, {
+            "selection": "none",
+            "why": "No agent integration is active and keyed.",
+        }
+
+    claiming = [a for a in candidates if _claims_lens(a, lens) and a.get("lenses")]
+    if claiming:
+        ordered = sorted(claiming, key=lambda a: a["path"])
+        chosen = ordered[0]
+        why = f"{chosen['title'] or chosen['name']} declares this lens."
+        reason: dict[str, object] = {"selection": "explicit", "why": why}
+        if len(ordered) > 1:
+            reason["also_claimed_by"] = [
+                a["title"] or a["name"] for a in ordered[1:]
+            ]
+            reason["why"] = (why + " Several do; the first by filename was used. "
+                             "Give one a narrower `lenses:` list to disambiguate.")
+        return agentic.load_config(chosen["path"]), reason
+
+    catch_all = [a for a in candidates if not a.get("lenses")]
+    if catch_all:
+        chosen = sorted(catch_all, key=lambda a: a["path"])[0]
+        return agentic.load_config(chosen["path"]), {
+            "selection": "fallback",
+            "why": (f"No integration claims the '{lens}' lens, so the "
+                    f"unscoped {chosen['title'] or chosen['name']} judged it. "
+                    "Add `lenses:` to a config to route this lens explicitly."),
+        }
+
+    return None, {
+        "selection": "unclaimed",
+        "why": (f"No integration claims the '{lens}' lens. "
+                f"{len(candidates)} integration(s) are active but each names "
+                "specific lenses. Add this lens to one of them, or leave a "
+                "config with an empty `lenses:` list as the catch-all."),
+        "candidates": [a["title"] or a["name"] for a in candidates],
+    }
+
+
+def default_config() -> dict | None:
+    """The first configured, keyed integration — or None.
+
+    Kept for callers that genuinely have no lens in hand. Judgment always wants
+    a specific judge, so prefer select_config(lens); this remains only so the
+    old call sites and their tests keep working.
+    """
+    candidates = usable_configs()
     if not candidates:
         return None
     return agentic.load_config(candidates[0]["path"])
 
 
-def format_for_record(j: dict) -> str:
+def format_for_record(j: dict, selection: dict | None = None) -> str:
     """The markdown block written into the artifact.
 
     The judgment is recorded next to the output it judged, so months later the
-    reasoning is there — not just the number.
+    reasoning is there — not just the number. The ROUTING is recorded too when
+    it was not an explicit claim: "why did this agent judge this lens?" is asked
+    long after the screen that would have answered it is gone.
+
+    The client writes this string verbatim rather than reformatting it, so a
+    second formatter could not drift — which it did, until F26 made the client
+    assert the server's own output.
     """
     label = {
         AT_THRESHOLD: "at threshold",
@@ -344,6 +437,11 @@ def format_for_record(j: dict) -> str:
         lines.append(f"**Judged by:** {who} — {j['reasoning']}")
     else:
         lines.append(f"**Judged by:** {who} — no reasoning returned")
+    # Only when the route was NOT an explicit claim. An explicit route needs no
+    # commentary; a fallback is exactly the thing worth explaining later.
+    if selection and selection.get("selection") not in (None, "explicit") \
+            and selection.get("why"):
+        lines.append(f"**Routing:** {selection['why']}")
     if j.get("questions"):
         lines.append("")
         lines.append("**Gaps the agent identified:**")

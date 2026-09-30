@@ -1253,13 +1253,17 @@ class PrismHandler(http.server.BaseHTTPRequestHandler):
         # the response says so rather than substituting the floor for it.
         judgment = None
         agent_error = None
+        # Why THIS agent judged this lens, so the human can see the choice
+        # instead of inferring it. F26 writes the judge into every artifact, so
+        # an arbitrary judge became legible — this makes it correctable.
+        selection = {"selection": "none", "why": "no judgment was attempted"}
         try:
-            cfg = adjudicate.default_config()
+            cfg, selection = adjudicate.select_config(lens)
             if cfg is None:
                 agent_error = (
-                    "No agent integration is configured, so nothing was judged. "
-                    "The structural check below is a floor only — it cannot "
-                    "approve an artifact."
+                    f"{selection['why']} Nothing was judged. The structural "
+                    "check below is a floor only — it cannot approve an "
+                    "artifact."
                 )
             else:
                 judgment = adjudicate.judge(artifact, lens, cfg)
@@ -1286,8 +1290,10 @@ class PrismHandler(http.server.BaseHTTPRequestHandler):
             "asked": judgment is not None,
             "judgment": judgment,
             "agent_error": agent_error,
+            "selection": selection,
             "floor": floor,
-            "record": adjudicate.format_for_record(judgment) if judgment else None,
+            "record": (adjudicate.format_for_record(judgment, selection)
+                       if judgment else None),
         })
 
     def read_body(self):
