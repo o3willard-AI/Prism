@@ -15,9 +15,14 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+// One definition of the environment, shared by every suite. These
+// suites used to resolve prism/ relative to ROOT, which is
+// correct only when launched from the repo root -- so running one from
+// anywhere else quietly read a file that was not there.
+const { ROOT } = require('./lib/env.js');
 
-const html = fs.readFileSync(path.join(process.cwd(), 'prism/index.html'), 'utf8');
-const script = fs.readFileSync(path.join(process.cwd(), 'prism/app.js'), 'utf8');
+const html = fs.readFileSync(path.join(ROOT, 'prism/index.html'), 'utf8');
+const script = fs.readFileSync(path.join(ROOT, 'prism/app.js'), 'utf8');
 
 class El {
   constructor(id) {
@@ -84,7 +89,7 @@ const PROSE = `so basically the ${TOKEN} export feature keeps failing whenever t
   await sleep(800);   // boot IIFE settles
 
   // ── Fork 1: the location ───────────────────────────────────────────────
-  const methodsDir = path.join(process.cwd(), 'prism', 'vault', 'knowledge', 'resources', 'crafting-methods');
+  const methodsDir = path.join(ROOT, 'prism', 'vault', 'knowledge', 'resources', 'crafting-methods');
   check('fork1: crafting-methods dir exists in the vault', fs.existsSync(methodsDir));
   check('fork1: README documents the contract', fs.existsSync(path.join(methodsDir, 'README.md')));
 
@@ -183,13 +188,13 @@ const PROSE = `so basically the ${TOKEN} export feature keeps failing whenever t
   //    behaviour itself is already proven by the fork4 checks above).
   //    Match the 'lcmtok' PREFIX (not just this run's token) and sweep
   //    source/ mirrors too, so a previously crashed run can't leave residue.
-  fs.unlinkSync(path.join(process.cwd(), 'prism', 'vault', methodPath));
+  fs.unlinkSync(path.join(ROOT, 'prism', 'vault', methodPath));
   if (archivedLens) {
-    const emissionDir = path.join(process.cwd(), 'prism', 'vault', path.dirname(archivedLens));
+    const emissionDir = path.join(ROOT, 'prism', 'vault', path.dirname(archivedLens));
     fs.rmSync(emissionDir, { recursive: true, force: true });
   }
   // sweep any fixture archive dirs / source mirrors carrying the prefix
-  const vaultRoot = path.join(process.cwd(), 'prism', 'vault');
+  const vaultRoot = path.join(ROOT, 'prism', 'vault');
   const sweepDir = (rel) => {
     const dir = path.join(vaultRoot, rel);
     if (!fs.existsSync(dir)) return;
@@ -205,7 +210,7 @@ const PROSE = `so basically the ${TOKEN} export feature keeps failing whenever t
   };
   sweepDir('archive/requirements');
   sweepDir('source/unordereds');
-  const leftover = fs.existsSync(path.join(process.cwd(), 'prism', 'vault', methodPath));
+  const leftover = fs.existsSync(path.join(ROOT, 'prism', 'vault', methodPath));
   check('cleanup: method file removed', !leftover);
 
   const pass = results.filter(x => x[1]).length;

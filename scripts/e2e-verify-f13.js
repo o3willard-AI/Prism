@@ -21,8 +21,10 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+// One definition of the environment, shared by every suite.
+const { ROOT } = require('./lib/env.js');
 
-const PRISM = path.join(__dirname, '..', 'prism');
+const PRISM = path.join(ROOT, 'prism');
 const VENDOR = path.join(PRISM, 'vendor', 'marked.min.js');
 
 let pass = 0, fail = 0;

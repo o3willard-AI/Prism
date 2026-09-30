@@ -16,7 +16,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = path.join(__dirname, '..');
+// One definition of the environment, shared by every suite.
+const { ROOT } = require('./lib/env.js');
 const APP = path.join(ROOT, 'prism', 'app.js');
 const API_PY = path.join(ROOT, 'prism', 'api-server.py');
 

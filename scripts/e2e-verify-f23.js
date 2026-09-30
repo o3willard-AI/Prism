@@ -17,11 +17,9 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { launch } from './lib/cdp.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.join(__dirname, '..');
-const PORT = Number(process.env.PORT || 8082);
-const API = `http://127.0.0.1:${PORT}`;
-const FRONT = process.env.PRISM_URL || 'http://127.0.0.1:8090';
+// One definition of the environment, shared by every suite.
+import env from './lib/env.js';
+const { ROOT, API, FRONT } = env;
 const CFG_REL = 'knowledge/process/confidence-thresholds.md';
 const CFG = path.join(ROOT, 'prism', 'vault', CFG_REL);
 

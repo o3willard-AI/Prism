@@ -27,7 +27,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = path.join(__dirname, '..');
+// One definition of the environment, shared by every suite.
+const { ROOT } = require('./lib/env.js');
 const APP = path.join(ROOT, 'prism', 'app.js');
 const VAULT = path.join(ROOT, 'prism', 'vault');
 
@@ -193,7 +194,7 @@ const read = (p) => fs.readFileSync(p, 'utf8');
         leaks.length === 0, 'leaks in: ' + leaks.join(', '));
 
   // Parity with the runtime guard, asserted rather than assumed.
-  const agenticSrc = fs.readFileSync(path.join(__dirname, '..', 'prism', 'agentic.py'), 'utf8');
+  const agenticSrc = fs.readFileSync(path.join(ROOT, 'prism', 'agentic.py'), 'utf8');
   const runtime = (agenticSrc.match(/_FORBIDDEN_FIELDS\s*=\s*re\.compile\(([\s\S]*?)\)/) || [])[1] || '';
   for (const term of ['credential', 'bearer', 'api', 'secret', 'token', 'password']) {
     check(`the doc check still covers "${term}" like the runtime guard`,

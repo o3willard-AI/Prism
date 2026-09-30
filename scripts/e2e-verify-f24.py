@@ -39,17 +39,22 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-ROOT = str(Path(__file__).resolve().parent.parent)
-sys.path.insert(0, os.path.join(ROOT, 'prism'))
-
+# The environment is resolved ONCE, in scripts/lib/env.py, and every suite
+# imports it. Nine suites used to resolve their own and disagreed: PRISM_API,
+# PRISM_SITE and PORT all meant one server, FRONT was hardcoded in two places,
+# and the cert defaulted to /tmp. e2e-verify-f27.js diffs the Python and
+# JavaScript definitions and fails on any drift.
+_HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(_HERE / 'lib'))
+sys.path.insert(0, str(_HERE.parent / 'prism'))
+import env  # noqa: E402
 import adjudicate as A  # noqa: E402
 
-API = os.environ.get('PRISM_API', 'http://127.0.0.1:8082')
-ADIR = os.path.join(ROOT, 'prism', 'vault', 'knowledge', 'integrations', 'agentic')
-LOG = os.environ.get('F24_LOG', '/tmp/fake-adj-f24.log')
-# Shared harness pieces, resolved from THIS file rather than from a fixed
-# checkout path or a /tmp default that only exists on one machine.
-LIB = os.path.join(ROOT, 'scripts', 'lib')
+ROOT = str(env.ROOT)
+API = env.API
+ADIR = str(env.VAULT / 'knowledge' / 'integrations' / 'agentic')
+LOG = env.F24_LOG
+LIB = str(env.LIB)
 
 # The fake agent's CA. NOT read from SSL_CERT_FILE: that variable is already
 # set to a certifi bundle in many environments, so trusting it here points the

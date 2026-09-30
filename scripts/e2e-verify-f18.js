@@ -2,8 +2,11 @@ const vm = require('vm');
 const fs = require('fs');
 const path = require('path');
 
-const API = 'http://127.0.0.1:8090/prism/api';
-const app = fs.readFileSync('/home/sblanken/workspace/Prism/prism/app.js', 'utf8');
+// One definition of the environment, shared by every suite. F18 talks to
+// the API through the front door, which is what F12 proves is required.
+const { FRONT, ROOT } = require('./lib/env.js');
+const API = FRONT + '/prism/api';
+const app = fs.readFileSync(path.join(ROOT, 'prism', 'app.js'), 'utf8');
 
 class El {
   constructor(id) {
@@ -126,9 +129,11 @@ const check = (n, c, d) => { if (c) { console.log('  PASS ' + n); pass++; }
   check('source copy is retained (DELETE cannot reach source/)',
         srcAfter.status === 200, 'got ' + srcAfter.status);
 
-  // cleanup the source copy the suite itself created
-  const { execSync } = require('child_process');
-  try { execSync(`rm -f /home/sblanken/workspace/Prism/prism/vault/${srcPath}`); } catch (e) {}
+  // Clean up the source copy the suite itself created. unlinkSync rather than
+  // `rm -f` through a shell: no quoting hazard if a path ever contains a space,
+  // and no second shell to fail. Leaving this file behind breaks F15 and F24
+  // on the NEXT run, so it is not optional.
+  try { fs.unlinkSync(path.join(ROOT, 'prism', 'vault', srcPath)); } catch (e) {}
 
   console.log(`\n${pass}/${pass + fail} checks passed`);
   process.exit(fail ? 1 : 0);

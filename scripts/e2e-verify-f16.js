@@ -28,7 +28,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const ROOT = path.join(__dirname, '..');
+// One definition of the environment, shared by every suite.
+const { ROOT } = require('./lib/env.js');
 const APP = path.join(ROOT, 'prism', 'app.js');
 const MARKED = path.join(ROOT, 'prism', 'vendor', 'marked.min.js');
 const VAULT = path.join(ROOT, 'prism', 'vault');
