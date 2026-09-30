@@ -26,6 +26,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // disagree about where the agent is listening.
 const env = require('./lib/env.js');
 const { ROOT, FRONT, STUB_PORT, STUB_HOST } = env;
+const { startStub, freePort } = require('./lib/stub-agent.js');
 const ADIR = path.join(ROOT, 'prism', 'vault', 'knowledge', 'integrations', 'agentic');
 // This suite is the ONLY thing that should ever arm an agent config in the
 // vault. It installs walkstub.md in setup and removes it in teardown — an
@@ -37,8 +38,16 @@ const STUB_BODY = [
   '# walk stub', '',
   '**Title:** Stub Adjudicator',
   '**Status:** active',
+  // F28 routes the judge per lens, and an UNCLAIMED lens deliberately gets no
+  // judge at all rather than a silent one. This config declares every lens, so
+  // it judges all of them. Without this line F26's judgment silently became
+  // `unjudged` and 24 assertions failed in terms that pointed at adjudication.
+  '**Lenses:** requirements-default, hypotheses-default, '
+    + 'rationalizations-default, ux-bridge-default',
   '**Kind:** openai',
-  '**Endpoint:** https://' + STUB_HOST + ':' + STUB_PORT + '/v1/chat/completions',
+  // Filled in from the live stub's `endpoint` after it starts, so the armed
+  // config cannot name a different URL than the process that must answer it.
+  '__ENDPOINT_LINE__',
   '**Model:** stub',
   '**Auth env:** PRISM_TEST_KEY',
   '',
@@ -114,24 +123,21 @@ const GOOD_PRD = [
 ].join('\n');
 
 (async () => {
-  // Free the stub port FIRST. A leftover stub from a previous run answers with
-  // stale logic and the walkthrough then fails for reasons that have nothing
-  // to do with Prism.
-  const { execSync, spawn } = require('node:child_process');
-  execSync(`bash scripts/lib/free-port.sh ${STUB_PORT}`, { cwd: ROOT, stdio: 'inherit' });
-  fs.writeFileSync(STUB, STUB_BODY);
-  // Detached and unref'd: the stub outlives this process, and teardown kills it
-  // BY PORT rather than by handle, which is the only way that actually works
-  // when a previous run is what bound the port. STUB_PORT is forwarded under
-  // the name the stub reads, so an override moves the process AND the armed
-  // config together — setting it in one place only is how you get a config
-  // pointing at a port nobody is listening on.
-  const stubProc = spawn('python3', ['scripts/lib/loop_stub_agent.py'], {
-    cwd: ROOT, detached: true, stdio: 'ignore',
-    env: { ...process.env, STUB_PORT, STUB_HOST },
-  });
-  stubProc.unref();
-  await sleep(1500);   // let it bind before the workflow asks it anything
+  // The stub lifecycle lives in scripts/lib/stub-agent.js: free the port BY
+  // NUMBER, start it, wait for a real TLS reply, and tear it down by port.
+  //
+  // This previously slept a fixed 1500ms and hoped. It also duplicated what
+  // F25 and F28-ui were each doing differently and worse, which is why the
+  // test runner had to shell out and kill the process itself.
+  let stub;
+  try {
+    stub = await startStub({ port: STUB_PORT, host: STUB_HOST });
+  } catch (e) {
+    console.error('  CANNOT START the loop stub agent — ' + e.message);
+    process.exit(2);
+  }
+  fs.writeFileSync(STUB, STUB_BODY.replace('__ENDPOINT_LINE__',
+                                         '**Endpoint:** ' + stub.endpoint));
 
   // Now that the stub is up AND this suite's config is armed, ask the server
   // whether it can actually reach it. Order matters: armed before the check, or
@@ -272,8 +278,9 @@ const GOOD_PRD = [
     // The armed config MUST go, or F15 and F24 fail on the next run. Leaving
     // test scaffolding in the vault is the residue this repo does not accept.
     try { fs.unlinkSync(STUB); } catch (e) { /* already gone */ }
-    try { execSync(`bash scripts/lib/free-port.sh ${STUB_PORT}`, { cwd: ROOT, stdio: 'ignore' }); }
-    catch (e) { /* port already free */ }
+    // Free the stub port BY NUMBER. Killing our own child handle would free
+    // nothing when the holder is a stub from a previous run.
+    freePort(STUB_PORT);
     for (const d of ['requirements', 'hypotheses', 'rationalizations', 'source/unordereds']) {
       const dir = path.join(ROOT, 'prism', 'vault', d);
       if (!fs.existsSync(dir)) continue;

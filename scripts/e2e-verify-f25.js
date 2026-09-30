@@ -26,6 +26,10 @@ import { launch } from './lib/cdp.js';
 
 // One definition of the environment, shared by every suite.
 import env from './lib/env.js';
+// The stub agent's lifecycle, shared with F26 and F28-ui. ESM can import a CJS
+// module's exports as named bindings via the default-export interop.
+import stubAgent from './lib/stub-agent.js';
+const { startStub, freePort } = stubAgent;
 const { ROOT, LIB, API, FRONT, CERT, KEY, STUB_PORT } = env;
 const ADIR = path.join(ROOT, 'prism', 'vault', 'knowledge', 'integrations', 'agentic');
 const CFG = path.join(ADIR, 'f25-loopstub.md');
@@ -52,50 +56,35 @@ function post(path_, obj) {
   });
 }
 
-// Wait for the stub to accept TLS on its port. The previous version resolved
-// on the first tick regardless, so the suite reported "not listening" while
-// the agent was fine — the F24 stale-server lesson again, this time in my own
-// readiness probe.
-function waitForPort(port, tls) {
-  return new Promise((resolve) => {
-    const mod = tls
-      ? { rejectUnauthorized: false, servername: '127.0.0.1' }
-      : {};
-    for (let i = 0; i < 80; i++) {
-      const r = (tls ? https : http).request(
-        { host: '127.0.0.1', port, method: 'POST', path: '/v1/ping', ...mod },
-        resp => { resp.resume(); resolve(true); });
-      r.on('error', () => { setTimeout(() => { if (i === 79) resolve(false); }, 150); });
-      r.end('{}');
-    }
-  });
-}
+// The stub agent's lifecycle lives in scripts/lib/stub-agent.js: free the port
+// BY NUMBER, start it, wait for a real TLS reply, and tear it down by port in a
+// finally. The hand-rolled probe this replaces looped 80 times issuing a request
+// with no await between passes, so it opened 80 sockets at once and raced
+// itself — and a stub left by a previous run was never freed, which is the F24
+// stale-server lesson wearing a different hat.
 
 (async () => {
   section('Setup');
   // The stub agent: at_threshold for most artifacts, below_threshold for one
-  // containing a PRD marker. That is the only way to exercise both branches
+  // containing TBD. That is the only way to exercise both branches
   // deterministically.
-  if (!fs.existsSync(path.join(LIB, 'loop_stub_agent.py'))) {
-    console.log('  MISSING scripts/lib/loop_stub_agent.py — cannot run');
-    process.exit(2);
-  }
   if (!fs.existsSync(CERT)) {
     console.log('  MISSING ' + CERT + ' — see the F24 SETUP block');
     process.exit(2);
   }
 
-  const stub = spawn('python3', [path.join(LIB, 'loop_stub_agent.py')], {
-    env: { ...process.env, STUB_PORT: String(STUB_PORT) },
-    stdio: 'ignore', detached: false,
-  });
-  const alive = await waitForPort(STUB_PORT, true);
-  check('the loop stub agent is listening', alive === true);
-  if (!alive) { try { stub.kill(); } catch (e) {} process.exit(2); }
+  let stub;
+  try {
+    stub = await startStub({ port: STUB_PORT });
+  } catch (e) {
+    console.log('  CANNOT START the loop stub agent — ' + e.message);
+    process.exit(2);
+  }
+  check('the loop stub agent is listening', true);
 
   fs.writeFileSync(CFG,
     '# F25 loop stub\n\n**Title:** Stub Adjudicator\n**Status:** active\n' +
-    `**Kind:** openai\n**Endpoint:** https://127.0.0.1:${STUB_PORT}/v1/chat/completions\n` +
+    `**Kind:** openai\n**Endpoint:** ${stub.endpoint}\n` +
     '**Model:** stub\n**Auth env:** PRISM_TEST_KEY\n');
 
   // Refuse BEFORE any assertion if the server cannot reach the stub. Without
@@ -310,7 +299,11 @@ function waitForPort(port, tls) {
     check('no console errors', errs.length === 0, errs.map(e => e.text).join(' | '));
   } finally {
     await browser.close();
-    try { stub.kill(); } catch (e) { /* already gone */ }
+    // Free the port BY NUMBER, not by killing our own child handle. A stub left
+    // by a previous run is not our child, so `stub.kill()` freed nothing and the
+    // next run talked to a stale agent. This is the F24 stale-server lesson, and
+    // it had already bitten this suite once before this line existed.
+    freePort(STUB_PORT);
     try { fs.unlinkSync(CFG); } catch (e) { /* gone */ }
     // Clean any lenses this run created.
     for (const dir of ['requirements', 'hypotheses', 'rationalizations', 'source/unordereds']) {

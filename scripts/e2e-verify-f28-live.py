@@ -1,12 +1,17 @@
-"""Confirm the routing note reaches the screen and the artifact, using a REAL
-configured agent — the assertion F28's unit tests cannot make.
+"""Routing, end to end, against a REAL configured agent — the assertion F28's
+unit tests cannot make.
 
 F28 covers select_config() and format_for_record() in isolation. This covers the
-two ends: the rendered card, and the file written from the server's record.
+two ends: what the API actually returns, and the record string the client writes
+into the artifact verbatim.
+
+Self-contained: it starts the stub agent itself (scripts/lib/stub_agent.py, the
+Python mirror of stub-agent.js) and tears it down by port on the way out. It
+previously assumed a human had started one, which is why the test runner had to
+do it from outside -- the last piece of "runs anywhere" resting on my
+orchestration script rather than on the repo.
 """
 import json
-import os
-import subprocess
 import sys
 import urllib.request
 from pathlib import Path
@@ -15,9 +20,14 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / 'lib'))
 import env  # noqa: E402
 
+# The stub lifecycle, shared with the JavaScript suites. Python cannot import a
+# JS module, so stub_agent.py mirrors stub-agent.js; both read the same
+# STUB_PORT from the same env module and call the same free-port.sh, so there is
+# only one place either can be wrong about the port.
+import stub_agent  # noqa: E402
+
 sys.path.insert(0, str(env.ROOT / 'prism'))
-import adjudicate  # noqa: E402
-import agentic     # noqa: E402
+import agentic  # noqa: E402
 
 CFG_DIR = Path(agentic.__file__).parent / 'vault' / str(agentic.AGENT_DIR)
 CFG = CFG_DIR / 'f28-probe.md'
@@ -42,21 +52,24 @@ def post(path, payload):
     return json.load(urllib.request.urlopen(req))
 
 
-# A config that claims only the UX lens. The requirements lens is therefore
-# UNCLAIMED, which must yield no judge and a reason that explains the fix —
-# the case the old first-by-filename code handled by silently picking someone.
-CFG.write_text(
-    '# f28 probe\n\n'
-    '**Title:** UX Judge\n'
-    '**Status:** active\n'
-    '**Lenses:** ux-bridge-default\n'
-    '**Kind:** openai\n'
-    f'**Endpoint:** {env.STUB_ENDPOINT}\n'
-    '**Model:** stub\n'
-    '**Auth env:** PRISM_TEST_KEY\n')
+def arm(title, lenses, endpoint):
+    """Write an agent config. The endpoint comes from the LIVE stub, never from
+    a re-derivation of host and port — two spellings of one URL is how they
+    drift apart and leave the config pointing at nothing."""
+    body = [f'# f28 probe', '',
+            f'**Title:** {title}', '**Status:** active']
+    if lenses:
+        body.append('**Lenses:** ' + ', '.join(lenses))
+    body += ['**Kind:** openai', f'**Endpoint:** {endpoint}',
+             '**Model:** stub', '**Auth env:** PRISM_TEST_KEY']
+    CFG.write_text('\n'.join(body) + '\n')
 
-try:
+
+def run(endpoint):
     print('\n== an unclaimed lens gets no judge, and says why ==')
+    # Claims only the UX lens, so requirements-default is UNCLAIMED. The old
+    # first-by-filename code handled this by silently picking someone.
+    arm('UX Judge', ['ux-bridge-default'], endpoint)
     d = post('/adjudicate', {'lens': 'requirements-default',
                              'artifact': '# PRD\n\n## Executive Summary\nx\n',
                              'threshold': 95})
@@ -87,14 +100,8 @@ try:
           'Routing:' not in (d2.get('record') or ''), d2.get('record'))
 
     print('\n== a fallback route is recorded in the artifact ==')
-    CFG.write_text(
-        '# f28 probe\n\n'
-        '**Title:** Catch-all Judge\n'
-        '**Status:** active\n'
-        '**Kind:** openai\n'
-        f'**Endpoint:** {env.STUB_ENDPOINT}\n'
-        '**Model:** stub\n'
-        '**Auth env:** PRISM_TEST_KEY\n')
+    # No `lenses:` at all — the original single-agent setup.
+    arm('Catch-all Judge', None, endpoint)
     d3 = post('/adjudicate', {'lens': 'requirements-default',
                               'artifact': '# PRD\n\n## Executive Summary\nx\n',
                               'threshold': 95})
@@ -111,9 +118,14 @@ try:
           d3.get('record'))
 
     print('\n== the record the client writes verbatim is complete ==')
-    rec = d3['record']
     for field in ('Clarity:', 'Judged by:', 'Routing:'):
-        check(f'the artifact carries {field}', field in rec, rec)
+        check(f'the artifact carries {field}', field in d3['record'], d3['record'])
+
+
+try:
+    with stub_agent.stub_agent() as endpoint:
+        print(f'\nstub agent: {endpoint}')
+        run(endpoint)
 finally:
     try:
         CFG.unlink()
