@@ -1083,6 +1083,55 @@ server on 8082 answered the first attempt with pre-change code, so the
 portability test was passing against the wrong binary. Freed both ports by
 number.
 
+**The systemic fix, and why the sweep alone was not enough.** Fixing F26's three
+lines would have left nine suites each carrying a private copy of "how to find
+the repo", and they already disagreed: `PRISM_API`, `PRISM_SITE` and `PORT` all
+named one server, `FRONT` was hardcoded in two files and absent in seven. The
+next suite would have got it right by remembering, which is exactly how F26 went
+wrong while F25 sat next to it doing it right. So the rules moved into
+`scripts/lib/env.{js,py}` and all 20 suites import them.
+
+**Two worse bugs surfaced during the migration than the ones being fixed:**
+
+- **`process.cwd()` in five static suites.** Worse than a hardcoded path: it is
+  correct only when the suite is launched from the repo root, so running one from
+  anywhere else reads a file that is not there and asserts against the *wrong
+  subject* — the assertions still run, they just mean nothing. 22 call sites.
+- **`SSL_CERT_FILE` had crept back into the cert precedence** while I was writing
+  the precedence list. On this box it points at certifi, so the fake agent's cert
+  resolved to a CA bundle and every TLS handshake would have failed against a
+  perfectly healthy agent. F24's docstring had already warned about precisely
+  this; only F27, which asserts the cert resolves *inside the checkout*, caught
+  it.
+
+**F27 is the guard that holds it together.** Python cannot import a JS module, so
+`env.js` and `env.py` are two definitions of the same thing. F27 diffs their
+`DECLARED` tables, asserts no suite carries a home path, a `/tmp` cert or
+`process.cwd()`, confirms every destructured name is really exported, and
+**actually loads each suite** rather than trusting `node --check`.
+
+That last check exists because the migration shipped a duplicate `STUB_PORT` and
+F25 died with *"Identifier already declared"* — while `node --check` passed it,
+because `--check` parses each file in isolation and cannot see the import graph.
+I hit the identical bug two lines later while writing the check itself, which is
+the most persuasive argument for having it.
+
+**One of F27's own checks was wrong, and portability found it.** It asserted the
+cert path did not start with `/tmp` — which fails a perfectly good checkout that
+*lives* in `/tmp`, exactly what the portability test does. The property is
+"inside the checkout", tested against the resolved `ROOT`, not against a location
+on someone's machine.
+
+**Teeth, four mutations, four catches:** dropping a Python alias (1), a home path
+in a suite (1), `process.cwd()` (1), `SSL_CERT_FILE` returning (2). The first run
+of the `process.cwd()` mutation reported 0 — that was my mutation not landing,
+not a weak guard; re-tested properly, it fails.
+
+**Portability, re-tested after the migration:** copy at `/tmp/portable2`, no
+`/tmp` certs, server started there — F27 303/303, F24 132/132, F25 44/44,
+F26 35/35, zero residue, with `ROOT` and the cert both resolved to the new path.
+Locally: 15 suites, **1040/1040**.
+
 ---
 
 ## The pattern in both columns

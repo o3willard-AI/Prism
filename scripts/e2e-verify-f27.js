@@ -46,11 +46,17 @@ check('the fake-agent cert fixture is committed, not in /tmp',
 check('and so is the key', fs.existsSync(E.FAKE_KEY) && E.FAKE_KEY.startsWith(ROOT),
       E.FAKE_KEY);
 
-section('No default points outside the repository');
+section('No default points outside the checkout');
+// The property is "inside the repo", NOT "not in /tmp" — a checkout can
+// legitimately live in /tmp, and the first version of this check failed a
+// perfectly good run at /tmp/portable2 for exactly that reason. Compare
+// against the resolved ROOT, which is the thing that actually matters.
 for (const [k, v] of Object.entries(E)) {
   if (typeof v !== 'string') continue;
   if (!/fake-|cert|key/i.test(k)) continue;
-  check(`${k} defaults inside the repo`, !v.startsWith('/tmp/') || /log$/i.test(k), v);
+  if (/log$/i.test(k)) continue;          // logs are runtime output, not fixtures
+  check(`${k} resolves inside the checkout`,
+        v.startsWith(ROOT + path.sep), `${v} (ROOT is ${ROOT})`);
 }
 
 section('The JS and Python definitions agree');
