@@ -26,10 +26,10 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.join(__dirname, '..');
-const PORT = Number(process.env.PORT || 8082);
-const API = `http://127.0.0.1:${PORT}`;
+// One definition of the environment, shared by every suite. A CJS module
+// imported from ESM arrives as the default export.
+import env from './lib/env.js';
+const { ROOT, API, LIB } = env;
 const VAULT_QUEUE = path.join(ROOT, 'prism', 'vault', 'ingestion', 'unprocessed');
 
 let pass = 0, fail = 0;
@@ -42,7 +42,7 @@ const check = (name, cond, detail) => {
 // The extractor is Python; drive it in-process rather than shelling out per
 // case, so the suite is fast and the fixtures stay in one place.
 const require = createRequire(import.meta.url);
-const FIXTURES = path.join(__dirname, 'lib', 'fixtures.py');
+const FIXTURES = path.join(LIB, 'fixtures.py');
 
 function pyExtract() {
   // Writes a tiny driver, runs it once, and returns a JSON map of
@@ -51,7 +51,7 @@ function pyExtract() {
   const driver = `
 import json, sys, base64
 sys.path.insert(0, ${JSON.stringify(path.join(ROOT, 'prism'))})
-sys.path.insert(0, ${JSON.stringify(path.join(__dirname, 'lib'))})
+sys.path.insert(0, ${JSON.stringify(LIB)})
 import extract, fixtures
 
 CASES = {

@@ -16,9 +16,14 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+// One definition of the environment, shared by every suite. These
+// suites used to resolve prism/ relative to ROOT, which is
+// correct only when launched from the repo root -- so running one from
+// anywhere else quietly read a file that was not there.
+const { ROOT } = require('./lib/env.js');
 
-const html = fs.readFileSync(path.join(process.cwd(), 'prism/index.html'), 'utf8');
-const script = fs.readFileSync(path.join(process.cwd(), 'prism/app.js'), 'utf8');
+const html = fs.readFileSync(path.join(ROOT, 'prism/index.html'), 'utf8');
+const script = fs.readFileSync(path.join(ROOT, 'prism/app.js'), 'utf8');
 
 class El {
   constructor(id) {
@@ -219,7 +224,7 @@ const PROSE = `so basically the ${TOKEN} export feature keeps failing whenever t
   // Immutable source mirrors live outside the API's DELETE-allowed roots
   // (by design — deletion semantics stop at the lens). The harness owns its
   // own noise: remove any source/ file carrying the test token.
-  const sourceRoot = path.join(process.cwd(), 'prism', 'vault', 'source');
+  const sourceRoot = path.join(ROOT, 'prism', 'vault', 'source');
   for (const dir of fs.readdirSync(sourceRoot)) {
     const dd = path.join(sourceRoot, dir);
     if (!fs.statSync(dd).isDirectory()) continue;

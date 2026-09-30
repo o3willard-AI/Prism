@@ -20,8 +20,11 @@ const vm = require('vm');
 const fs = require('fs');
 const path = require('path');
 
-const API = 'http://127.0.0.1:8090/prism/api';
-const app = fs.readFileSync('/home/sblanken/workspace/Prism/prism/app.js', 'utf8');
+// One definition of the environment, shared by every suite. Talks to the API
+// through the front door, which is what F12 proves is required.
+const { FRONT, ROOT } = require('./lib/env.js');
+const API = FRONT + '/prism/api';
+const app = fs.readFileSync(path.join(ROOT, 'prism', 'app.js'), 'utf8');
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 class El {
@@ -326,7 +329,7 @@ TODO
       .catch(() => {});
   }
   const leftover = fs.readdirSync(
-    path.join(__dirname, '..', 'prism', 'vault', 'requirements'))
+    path.join(ROOT, 'prism', 'vault', 'requirements'))
     .filter(f => f.includes('f20probe'));
   check('the suite leaves no vault residue', leftover.length === 0, leftover.join(', '));
 

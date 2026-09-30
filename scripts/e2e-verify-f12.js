@@ -14,7 +14,9 @@
 //   - python3 prism/api-server.py running on :8082
 // Usage:  node scripts/e2e-verify-f12.js     (exit 0 = all checks pass)
 
-const BASE = process.env.PRISM_API || 'http://127.0.0.1:8082';
+// One definition of the environment, shared by every suite.
+const { API, ROOT } = require('./lib/env.js');
+const BASE = API;
 
 let pass = 0, fail = 0;
 function check(name, cond, detail) {
@@ -158,7 +160,7 @@ const PROBE = 'knowledge/resources/skills/f12-probe.md';
     try { sourceRel = JSON.parse(okIngest.body).source || null; } catch (e) {}
     check('ingest reported a source mirror path', !!sourceRel, okIngest.body.slice(0, 80));
     if (sourceRel) {
-      const srcFile = path.join(__dirname, '..', 'prism', 'vault', sourceRel);
+      const srcFile = path.join(ROOT, 'prism', 'vault', sourceRel);
       let ok = false, why = '';
       try { fs.unlinkSync(srcFile); ok = true; }
       catch (e) { ok = e.code === 'ENOENT'; why = e.code; }

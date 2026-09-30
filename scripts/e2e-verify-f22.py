@@ -34,20 +34,23 @@ remove the whole class of problem.
 import json, os, sys, time, socket, subprocess, urllib.request, urllib.error
 from pathlib import Path
 
-# Resolve the repo from this file rather than hardcoding a home directory.
-# A hardcoded /home/<user>/ path is why a fresh clone on another machine
-# cannot run this suite at all.
-ROOT = str(Path(__file__).resolve().parent.parent)
-sys.path.insert(0, os.path.join(ROOT, 'prism'))
+# The environment is resolved ONCE, in scripts/lib/env.py, and every suite
+# imports it. Nine suites used to resolve their own and disagreed: PRISM_API,
+# PRISM_SITE and PORT all meant one server, FRONT was hardcoded in two places,
+# and the cert defaulted to /tmp. e2e-verify-f27.js diffs the Python and
+# JavaScript definitions and fails on any drift.
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'lib'))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'prism'))
+import env  # noqa: E402
 
-API = os.environ.get('PRISM_API', 'http://127.0.0.1:8082')
-AGENT_DIR = ROOT + '/prism/vault/knowledge/integrations/agentic'
-LOG = os.environ.get('FAKE_AGENT_LOG', '/tmp/fake-agent.log')
-BASE_PORT = int(os.environ.get('FAKE_AGENT_PORT', '8100'))
-# A self-signed 127.0.0.1 cert is committed at scripts/lib/fake-cert.pem so the
-# suite runs on a fresh checkout with no /tmp state left over from a previous
-# machine. Override with FAKE_AGENT_CERT.
-CERT = os.environ.get('FAKE_AGENT_CERT', os.path.join(ROOT, 'scripts', 'lib', 'fake-cert.pem'))
+ROOT = str(env.ROOT)
+API = env.API
+AGENT_DIR = str(env.VAULT / 'knowledge' / 'integrations' / 'agentic')
+LOG = env.FAKE_AGENT_LOG
+BASE_PORT = env.FAKE_AGENT_BASE_PORT
+# A self-signed 127.0.0.1 cert is committed in-repo, so the suite runs on a
+# fresh checkout with no /tmp state left over from another machine.
+CERT = env.FAKE_CERT
 
 PASS = FAIL = 0
 

@@ -32,8 +32,12 @@ const fs = require('fs');
 const { execFileSync } = require('child_process');
 const { launch, findChrome } = require('./lib/cdp');
 
-const API = process.env.PRISM_SITE || 'http://127.0.0.1:8090';
-const APP = path.join(__dirname, '..', 'prism', 'app.js');
+// One definition of the environment, shared by every suite. PRISM_SITE is
+// kept as an alias in env.js because it is what this suite has always used
+// -- and it names the FRONT door, not the backend.
+const { FRONT, ROOT, VAULT } = require('./lib/env.js');
+const API = FRONT;
+const APP = path.join(ROOT, 'prism', 'app.js');
 const HEADFUL = process.argv.includes('--headful');
 
 let pass = 0, fail = 0;
@@ -48,7 +52,7 @@ function section(s) { console.log(`\n${s}`); }
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // The real vault, so staging writes somewhere legitimate and disposable.
-const VAULT = path.join(__dirname, '..', 'prism', 'vault');
+// VAULT comes from the shared module rather than being rebuilt from ROOT here.
 
 (async () => {
   console.log('Prism browser check (F19)');
@@ -327,7 +331,7 @@ function cleanupSources() {
       // Leave anything the repo actually tracks.
       try {
         execFileSync('git', ['ls-files', '--error-unmatch', fp],
-                    { cwd: path.join(__dirname, '..'), stdio: 'ignore' });
+                    { cwd: ROOT, stdio: 'ignore' });
         continue;                       // tracked — not ours
       } catch (e) { /* untracked → ours to remove */ }
       try { fs.unlinkSync(fp); } catch (e) {}

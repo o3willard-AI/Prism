@@ -19,17 +19,14 @@ const { launch } = require('./lib/cdp.js');
 const fs = require('node:fs');
 const path = require('node:path');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-// Derive the repo root from this file, and the target from the environment —
-// the same way F25 does. Hardcoding one developer's checkout made this suite
-// unrunnable anywhere else, which is not a property a test is allowed to have.
-const ROOT = path.join(__dirname, '..');
-const FRONT = process.env.PRISM_URL || 'http://127.0.0.1:8090';
-// The stub's own port. This suite starts and owns it, so a default is correct —
-// but name it once and let the environment move it, so a busy box does not
-// turn into a false failure. The name must match what loop_stub_agent.py
-// reads, or the two silently disagree and the override is a lie.
-const STUB_PORT = process.env.PRISM_STUB_PORT || process.env.STUB_PORT || '8400';
-const STUB_HOST = process.env.PRISM_STUB_HOST || '127.0.0.1';
+// One definition of the environment, shared by every suite. This file used to
+// hardcode a developer's checkout path and the front-door URL, which made it
+// unrunnable anywhere else — not a property a test is allowed to have. The stub
+// port comes from here too, so the armed config and the spawned process cannot
+// disagree about where the agent is listening.
+const {
+  ROOT, FRONT, STUB_PORT, STUB_HOST,
+} = require('./lib/env.js');
 const ADIR = path.join(ROOT, 'prism', 'vault', 'knowledge', 'integrations', 'agentic');
 // This suite is the ONLY thing that should ever arm an agent config in the
 // vault. It installs walkstub.md in setup and removes it in teardown — an

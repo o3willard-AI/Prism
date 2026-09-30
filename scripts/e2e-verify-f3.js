@@ -12,9 +12,14 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+// One definition of the environment, shared by every suite. These
+// suites used to resolve prism/ relative to ROOT, which is
+// correct only when launched from the repo root -- so running one from
+// anywhere else quietly read a file that was not there.
+const { ROOT } = require('./lib/env.js');
 
-const html = fs.readFileSync(path.join(process.cwd(), 'prism/index.html'), 'utf8');
-const script = fs.readFileSync(path.join(process.cwd(), 'prism/app.js'), 'utf8');
+const html = fs.readFileSync(path.join(ROOT, 'prism/index.html'), 'utf8');
+const script = fs.readFileSync(path.join(ROOT, 'prism/app.js'), 'utf8');
 
 class El {
   constructor(id) {

@@ -24,17 +24,10 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, spawn } from 'node:child_process';
 import { launch } from './lib/cdp.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.join(__dirname, '..');
-const LIB = path.join(__dirname, 'lib');
-const API = process.env.PRISM_API || 'http://127.0.0.1:8082';
-const FRONT = process.env.PRISM_URL || 'http://127.0.0.1:8090';
-// Repo-relative cert fixture. A /tmp default only works on the box that
-// generated it, so the suite silently failed anywhere else.
-const CERT = process.env.F24_CA_FILE || path.join(LIB, 'fake-cert.pem');
-const KEY = process.env.F24_KEY_FILE || path.join(LIB, 'fake-key.pem');
+// One definition of the environment, shared by every suite.
+import env from './lib/env.js';
+const { ROOT, LIB, API, FRONT, CERT, KEY, STUB_PORT } = env;
 const ADIR = path.join(ROOT, 'prism', 'vault', 'knowledge', 'integrations', 'agentic');
-const STUB_PORT = Number(process.env.LOOP_STUB_PORT || 8400);
 const CFG = path.join(ADIR, 'f25-loopstub.md');
 
 let pass = 0, fail = 0;
@@ -83,7 +76,7 @@ function waitForPort(port, tls) {
   // The stub agent: at_threshold for most artifacts, below_threshold for one
   // containing a PRD marker. That is the only way to exercise both branches
   // deterministically.
-  if (!fs.existsSync(path.join(__dirname, 'lib', 'loop_stub_agent.py'))) {
+  if (!fs.existsSync(path.join(LIB, 'loop_stub_agent.py'))) {
     console.log('  MISSING scripts/lib/loop_stub_agent.py — cannot run');
     process.exit(2);
   }
@@ -92,7 +85,7 @@ function waitForPort(port, tls) {
     process.exit(2);
   }
 
-  const stub = spawn('python3', [path.join(__dirname, 'lib', 'loop_stub_agent.py')], {
+  const stub = spawn('python3', [path.join(LIB, 'loop_stub_agent.py')], {
     env: { ...process.env, STUB_PORT: String(STUB_PORT) },
     stdio: 'ignore', detached: false,
   });
