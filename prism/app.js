@@ -279,6 +279,24 @@ async function renderView(view) {
   }
 }
 
+// The staged queue's in-memory state, declared before the render that
+// assigns it — see the note on _deskQueueFilter for why filtering
+// matches on content as well as filename.
+//
+// `per` and `page` are the PAGINATION the person asked for. The first attempt
+// had a single "Show N older more" button that rendered all N at once, which
+// turned 20 rows into 500 scrollable ones and was correctly called out as not
+// being pagination. One page at a time, with a choice of page size.
+const _deskQueue = {
+  all: [], bodies: new Map(), filter: '', scanToken: 0,
+  per: 20, page: 1,
+};
+const _DESK_QUEUE_PER_OPTIONS = [20, 40, 100];
+
+// Kept as a name because renderDesk's template referenced it; the default page
+// size now lives in _deskQueue.per so the pager and the list cannot disagree.
+const QUEUE_PAGE = _deskQueue.per;
+
 // ── Crafting Table: the Refraction Desk (F7 redesign) ─────────────────────
 // One input surface — "bring fog, get focus." Not a status board.
 // Renamed from "Front Door" 25 Aug 2026: it sits under Workflows, below
@@ -330,39 +348,81 @@ async function renderDesk(area) {
   // Ingest page could fill it and the retired wizard was the only thing that
   // could read it. With both gone, the desk lists it here — otherwise staging
   // is a place raw thought goes to be lost.
+  //
+  // Three things this has to get right, each of them found by a person using
+  // it against a large queue rather than by a test:
+  //
+  //   1. NEWEST FIRST. /list returns directory order, which put the item you
+  //      staged thirty seconds ago at the very bottom of 476. Staging is an
+  //      inbox: you put something down and come back to it later. Oldest-first
+  //      makes the newest item the hardest to reach.
+  //   2. A LOCAL FILTER. Vault search indexes this directory but caps at 30
+  //      results, so with a real backlog most of the queue is unreachable by
+  //      searching. The filter here is unbounded and scoped to the queue.
+  //   3. COLLAPSE, not pagination. A queue is read top-down; page controls are
+  //      for documents you page through. The newest N, with the rest one click
+  //      away, is what the shape of the task wants.
+  const QUEUE_PAGE = 20;
   let queuedRows = '';
   let queued = [];
   try {
     const list = await apiGet('/list?path=' + encodeURIComponent('ingestion/unprocessed'));
     queued = (list || []).filter(f => f.type === 'file' && f.name.endsWith('.md')
                                      && !f.name.startsWith('_'));
+    // Newest first, by modification time — NOT by filename. Filenames carry a
+    // date but no time and a random id, so two thoughts staged the same day had
+    // no defined order, and sorting by name put the newest one wherever its
+    // random id happened to fall. That was the original bug: you staged a
+    // thought and could not get back to it. Falls back to the name for any
+    // item the server could not stat, so an older API cannot break the desk.
+    queued.sort((a, b) => {
+      const am = Number(a.modified) || 0;
+      const bm = Number(b.modified) || 0;
+      if (am && bm && am !== bm) return bm - am;
+      return (b.name || '').localeCompare(a.name || '');
+    });
   } catch (e) { /* queue is local and may not exist yet — not an error */ }
 
+  // Hand the sorted list to the filter/expand helpers. Kept as module state
+  // rather than re-fetched per keystroke.
+  _deskQueue.all = queued;
+  _deskQueue.page = 1;
+  _deskQueue.bodies.clear();
+
   if (queued.length) {
+    const per = _deskQueue.per;
+    const pages = Math.max(1, Math.ceil(queued.length / per));
     queuedRows = `
-      <div class="card" style="margin-top:20px">
-        <div class="section-header" style="margin-bottom:10px">
+      <div class="card desk-queue" style="margin-top:20px">
+        <div class="section-header" style="margin-bottom:10px;align-items:baseline">
           <h3 style="font-size:14px">In the queue</h3>
-          <span style="font-size:12px;color:var(--text-secondary)">
-            ${queued.length} staged · local only, never synced
+          <span class="desk-queue-count" data-queue-count>
+            ${queued.length} staged · newest first · local only, never synced
           </span>
         </div>
-        ${queued.map(f => {
-          const label = f.name.replace('.md','').replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/-/g,' ');
-          return `<div class="desk-continue-row">
-            <span style="flex:1;font-size:13.5px">${escHtml(label)}</span>
-            <button class="btn btn-ghost btn-sm" onclick="_deskLoadQueued('${escHtml(f.path)}')">Load →</button>
-            <button class="btn btn-ghost btn-sm" onclick="_deskDiscardQueued('${escHtml(f.path)}')"
-              title="Delete from the queue">🗑</button>
-          </div>`;
-        }).join('')}
+        <input class="desk-queue-filter" id="desk-queue-filter" type="search"
+               placeholder="Filter ${queued.length} staged thoughts…"
+               oninput="_deskQueueFilter(this.value)"
+               aria-label="Filter staged thoughts">
+        <div class="desk-queue-list" id="desk-queue-list">
+          ${queued.slice(0, per).map(f => _deskQueueRow(f)).join('')}
+        </div>
+        <div class="desk-queue-pager" id="desk-queue-pager"
+             data-total="${queued.length}" data-per="${per}" data-page="1">
+          ${_deskQueuePagerHtml(queued.length)}
+        </div>
       </div>`;
   }
 
+  // F29b: these are the SHAPES an artifact can take, not processes the human
+  // must choose up front. "Craft as a Requirement" reads as a destination; the
+  // old "Requirement → developer-ready PRD" read as a tool the thought gets
+  // pushed through, which is the framing that made this feel like a dispatcher
+  // rather than a workbench.
   const lensDoors = [
-    { key: 'requirements',     icon: '📋', label: 'Requirement',     hint: 'capability → developer-ready PRD' },
+    { key: 'requirements',     icon: '📋', label: 'Requirement',     hint: 'something to build' },
     { key: 'hypotheses',       icon: '🔬', label: 'Hypothesis',      hint: 'a belief worth testing' },
-    { key: 'rationalizations', icon: '🧩', label: 'Rationalization', hint: 'post-hoc account, structured' },
+    { key: 'rationalizations', icon: '🧩', label: 'Rationalization', hint: 'why it went that way' },
   ].map(d => `
     <button class="desk-door" data-lens="${d.key}" onclick="deskLensDoor('${d.key}')"
       style="flex-direction:column;align-items:flex-start;gap:2px;min-width:170px;text-align:left">
@@ -569,6 +629,193 @@ function _rawIngestBody(content) {
   return body.join('\n').trim();
 }
 
+// ── The staged queue: row rendering, filtering, expanding ────────────────
+//
+// The queue holds the full list in memory after the desk renders. A person
+// filtering it is asking "where is the thought about X", and they remember X
+// by its CONTENT — "the checkout one" — not by the generated filename. So the
+// filter matches both the label and the first line of the body. Bodies are
+// fetched lazily and cached, because pulling 476 files over HTTP on every
+// keystroke would be worse than the bug.
+
+function _deskQueueRow(f) {
+  const label = f.name.replace('.md', '').replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/-/g, ' ');
+  const day = (f.name.match(/^\d{4}-\d{2}-\d{2}/) || [''])[0];
+  return `<div class="desk-continue-row" data-queue-path="${escHtml(f.path)}"
+       data-queue-name="${escHtml(f.name)}" data-queue-label="${escHtml(label)}">
+    <span class="desk-queue-day">${escHtml(day)}</span>
+    <span class="desk-queue-label">${escHtml(label)}</span>
+    <button class="btn btn-ghost btn-sm" onclick="_deskLoadQueued('${escHtml(f.path)}')"
+      aria-label="Load this staged thought">Load →</button>
+    <button class="btn btn-ghost btn-sm" onclick="_deskDiscardQueued('${escHtml(f.path)}')"
+      title="Delete from the queue" aria-label="Delete from the queue">🗑</button>
+  </div>`;
+}
+
+async function _deskQueueBody(path) {
+  if (_deskQueue.bodies.has(path)) return _deskQueue.bodies.get(path);
+  let text = '';
+  try {
+    const { content } = await apiGet('/file?path=' + encodeURIComponent(path));
+    // Only the body, and only the first chunk — enough to match a phrase
+    // against without holding 477 whole thoughts in memory.
+    //
+    // `_rawIngestBody` is the same unwrapper _deskLoadQueued uses. This
+    // originally called a `_deskUnwrap` that does not exist, and the catch
+    // below turned that ReferenceError into an empty string — so every one of
+    // the 477 bodies silently cached as blank and content search matched
+    // nothing, with no error anywhere. The catch now logs, because a filter
+    // that quietly finds nothing is worse than one that fails visibly.
+    text = _rawIngestBody(content).slice(0, 600).toLowerCase();
+  } catch (e) {
+    console.warn('queue: could not read ' + path + ' — ' + e.message);
+    text = '';
+  }
+  _deskQueue.bodies.set(path, text);
+  return text;
+}
+
+/** Re-render the list for the current filter. */
+async function _deskQueueFilter(q) {
+  const next = (q || '').trim().toLowerCase();
+  // Typing a new filter starts at page 1; paging keeps its place.
+  if (next !== _deskQueue.filter) _deskQueue.page = 1;
+  _deskQueue.filter = next;
+  const list = document.getElementById('desk-queue-list');
+  if (!list) return;
+
+  // A stale filter's scan must not repaint the list when it finally finishes.
+  // Scanning 477 files took long enough that an earlier keystroke was still in
+  // flight when the next one landed, and the older result overwrote the newer.
+  const token = ++_deskQueue.scanToken;
+
+  const all = _deskQueue.all;
+  let items;
+  if (_deskQueue.filter) {
+    items = await _deskQueueMatches(_deskQueue.filter, token);
+    if (token !== _deskQueue.scanToken) return;   // superseded
+  } else {
+    items = all;
+  }
+
+  // A filter starts from the first page: narrowing the list and then landing
+  // on page 14 of the previous result set is disorienting.
+  const total = items.length;
+  const per = _deskQueue.per;
+  const pages = Math.max(1, Math.ceil(total / per));
+  if (_deskQueue.page > pages) _deskQueue.page = pages;
+  const start = (_deskQueue.page - 1) * per;
+  const pageItems = items.slice(start, start + per);
+
+  list.innerHTML = pageItems.length
+    ? pageItems.map(f => _deskQueueRow(f)).join('')
+    : `<div class="desk-queue-empty">Nothing staged matches “${escHtml(_deskQueue.filter)}”.</div>`;
+
+  const countEl = document.querySelector('[data-queue-count]');
+  if (countEl) {
+    countEl.textContent = _deskQueue.filter
+      ? `${total} of ${all.length} match “${_deskQueue.filter}” · local only, never synced`
+      : `${all.length} staged · newest first · local only, never synced`;
+  }
+
+  const pager = document.getElementById('desk-queue-pager');
+  if (pager) pager.innerHTML = _deskQueuePagerHtml(total);
+}
+
+/**
+ * Find every queued item matching `needle`, by name OR by content.
+ *
+ * The bodies are fetched in BOUNDS of 40 at a time, and only for files not
+ * already cached. Scanning 477 sequentially took longer than a person's pause
+ * between keystrokes, which is how an older scan could repaint the list after
+ * a newer one. Batching keeps it to a handful of round trips.
+ */
+async function _deskQueueMatches(needle, token) {
+  const all = _deskQueue.all;
+  const hits = [];
+  const needBody = [];
+  for (const f of all) {
+    const name = (f.name || '').toLowerCase();
+    const label = name.replace(/\.md$/, '').replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/-/g, ' ');
+    if (name.includes(needle) || label.includes(needle)) hits.push(f);
+    else needBody.push(f);
+  }
+  if (!needle || !needBody.length) return hits;
+
+  const BATCH = 40;
+  for (let i = 0; i < needBody.length; i += BATCH) {
+    if (token !== _deskQueue.scanToken) return hits;
+    const slice = needBody.slice(i, i + BATCH);
+    const bodies = await Promise.all(slice.map(f => _deskQueueBody(f.path)));
+    slice.forEach((f, n) => { if (bodies[n].includes(needle)) hits.push(f); });
+  }
+  // Keep the queue's newest-first order rather than name-then-content order.
+  const order = new Map(all.map((f, n) => [f.path, n]));
+  return hits.sort((a, b) => (order.get(a.path) ?? 0) - (order.get(b.path) ?? 0));
+}
+
+/**
+ * The pager: page size, page N of M, prev/next, and a jump.
+ *
+ * `total` is the number of items the CURRENT filter matched, not the queue
+ * length -- so the pager describes what is on screen.
+ */
+function _deskQueuePagerHtml(total) {
+  const per = _deskQueue.per;
+  const pages = Math.max(1, Math.ceil(total / per));
+  const page = Math.min(_deskQueue.page, pages);
+  const first = total === 0 ? 0 : (page - 1) * per + 1;
+  const last = Math.min(total, page * per);
+
+  const sizes = _DESK_QUEUE_PER_OPTIONS.map(n =>
+    `<option value="${n}"${n === per ? ' selected' : ''}>${n}</option>`).join('');
+
+  // All is offered only when it is a real choice; with a small queue it is
+  // simply the current state, and offering it would be noise.
+  const allSize = per === total && total > 0 ? '' :
+    `<option value="all"${per >= total ? ' selected' : ''}>All</option>`;
+
+  return `
+    <div class="desk-queue-pager-row">
+      <span class="desk-queue-range">${first}–${last} of ${total}</span>
+      <label class="desk-queue-size">
+        Show
+        <select onchange="_deskQueueSetPer(this.value)">${sizes}${allSize}</select>
+        per page
+      </label>
+    </div>
+    <div class="desk-queue-pager-row">
+      <button class="btn btn-ghost btn-sm" onclick="_deskQueuePage(1)"
+        ${page === 1 ? 'disabled' : ''} aria-label="First page">« First</button>
+      <button class="btn btn-ghost btn-sm" onclick="_deskQueuePage(${page - 1})"
+        ${page === 1 ? 'disabled' : ''} aria-label="Previous page">‹ Prev</button>
+      <span class="desk-queue-pageno">Page ${page} of ${pages}</span>
+      <button class="btn btn-ghost btn-sm" onclick="_deskQueuePage(${page + 1})"
+        ${page === pages ? 'disabled' : ''} aria-label="Next page">Next ›</button>
+      <button class="btn btn-ghost btn-sm" onclick="_deskQueuePage(${pages})"
+        ${page === pages ? 'disabled' : ''} aria-label="Last page">Last »</button>
+    </div>`;
+}
+
+/** Go to a page, clamped to the available range. */
+function _deskQueuePage(n) {
+  _deskQueue.page = Math.max(1, n);
+  _deskQueueFilter(_deskQueue.filter);
+  const list = document.getElementById('desk-queue-list');
+  // Bring the queue into view: clicking "Next" at the bottom of page 1 must
+  // not leave the person staring at where they were.
+  const card = document.querySelector('.desk-queue');
+  if (card) card.scrollIntoView({ block: 'nearest' });
+}
+
+/** Change the page size and return to page 1 — page 7 of 20 is meaningless
+ *  once the page size changes. */
+function _deskQueueSetPer(v) {
+  _deskQueue.per = v === 'all' ? Math.max(1, _deskQueue.all.length) : Number(v) || 20;
+  _deskQueue.page = 1;
+  _deskQueueFilter(_deskQueue.filter);
+}
+
 async function _deskLoadQueued(path) {
   try {
     const { content } = await apiGet('/file?path=' + encodeURIComponent(path));
@@ -577,7 +824,15 @@ async function _deskLoadQueued(path) {
     _desk = { content: raw, type: 'unordered', lens: null, fileLoaded: name };
     document.getElementById('topbar-title').textContent = 'Crafting Table';
     await renderDesk(document.getElementById('content-area'));
-    toast('📥 Loaded — pick a lens to refract it, or stage it again');
+    // The old hint was "pick a lens to refract it, or stage it again", which
+    // walked a person straight back into the picker they were trying to avoid.
+    // Loading a thought is the FIRST step of crafting: the raw material is now
+    // in front of you on the Table, which is where the work happens.
+    toast('📥 Loaded — this is your raw material. Craft it below.');
+    // Bring the input into view rather than leaving the person at the queue.
+    const ta = document.getElementById('desk-content');
+    if (ta) ta.focus({ preventScroll: true });
+    ta?.scrollIntoView({ block: 'center' });
   } catch (e) {
     toast('Could not load that artifact: ' + e.message, true);
   }

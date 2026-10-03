@@ -242,13 +242,28 @@ print(json.dumps(out))
       // clock rather than hardcoded so the suite keeps working tomorrow.
       const vault = path.join(ROOT, 'prism', 'vault');
       const today = new Date().toISOString().slice(0, 10);
-      for (const dir of ['requirements', 'hypotheses', 'rationalizations', 'source/unordereds']) {
+      // `ingestion/unprocessed` is here because opening the desk and clicking a
+      // lens door STAGES the raw thought. This suite cleaned the lens folders
+      // but not the queue, so every run left one file behind — and F27 executes
+      // this suite as its module-load check, so F27 leaked 9 files per run and
+      // a developer's queue grew by hundreds. Removing the directory when this
+      // run emptied it is what makes the second run on a clean clone match the
+      // first.
+      for (const dir of ['requirements', 'hypotheses', 'rationalizations',
+                         'source/unordereds', 'ingestion/unprocessed']) {
         const d = path.join(vault, dir);
         if (!fs.existsSync(d)) continue;
         for (const f of fs.readdirSync(d)) {
           if (f.startsWith(today + '-')) {
             try { fs.unlinkSync(path.join(d, f)); } catch (e) { /* ignore */ }
           }
+        }
+        // Only remove the queue directory if we emptied it — a real backlog must
+        // survive. It is gitignored, so an empty one is indistinguishable from
+        // absent anyway, which is what the next run expects.
+        if (dir === 'ingestion/unprocessed'
+            && fs.readdirSync(d).length === 0) {
+          try { fs.rmdirSync(d); } catch (e) { /* not empty: leave it */ }
         }
       }
       await browser.close();
@@ -279,14 +294,19 @@ print(json.dumps(out))
   const VAULT = path.join(ROOT, 'prism', 'vault');
   const TODAY = new Date().toISOString().slice(0, 10);
   const residue = [];
-  for (const dir of ['requirements', 'hypotheses', 'rationalizations', 'source/unordereds']) {
+  // `ingestion/unprocessed` belongs in this list. It did not, so the suite
+  // checked the folders it cleaned while ignoring the one it leaked into —
+  // and reported "no residue" on a run that had just left a file behind. The
+  // check has to cover what the run touches, or it certifies nothing.
+  for (const dir of ['requirements', 'hypotheses', 'rationalizations',
+                     'source/unordereds', 'ingestion/unprocessed']) {
     const d = path.join(VAULT, dir);
     if (!fs.existsSync(d)) continue;
     for (const f of fs.readdirSync(d)) {
       if (f.startsWith(TODAY + '-')) residue.push(dir + '/' + f);
     }
   }
-  check('the suite leaves no lens or source residue in the vault',
+  check('the suite leaves no lens, source, or queue residue in the vault',
         residue.length === 0, residue.slice(0, 6).join(', '));
 
   console.log(`\n${pass}/${pass + fail} checks passed`);
