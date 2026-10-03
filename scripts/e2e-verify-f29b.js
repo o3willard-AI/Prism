@@ -60,11 +60,13 @@ const rows = (page) => page.eval(
           per === PER_DEFAULT, String(per));
 
     section('A page is a page');
-    // min(20, seeded): with 45 seeded this is 20, but written so the assertion
-    // describes the rule rather than the number that happens to be seeded.
-    check('the default page shows min(20, seeded) rows',
-          (await rows(page)) === Math.min(20, seededPresent),
-          `${await rows(page)} rows, ${seededPresent} seeded`);
+    // min(20, total): with 45 seeded on a clean clone this is 20, but written so
+    // the assertion describes the rule rather than the number that happens to
+    // be there. A developer's own backlog counts too — the pager pages
+    // whatever is in the queue.
+    check('the default page shows min(20, total) rows',
+          (await rows(page)) === Math.min(20, total),
+          `${await rows(page)} rows, ${total} total`);
     check('and never more than the page size',
           (await rows(page)) <= per, `${await rows(page)} > ${per}`);
 
@@ -73,9 +75,9 @@ const rows = (page) => page.eval(
       `document.querySelector('.desk-queue-list .desk-continue-row').dataset.queueName`);
     await page.eval(`_deskQueuePage(2)`);
     await sleep(1200);
-    check('page 2 shows another min(20, seeded - 20) rows',
-          (await rows(page)) === Math.min(20, Math.max(0, seededPresent - 20)),
-          `${await rows(page)} rows, ${seededPresent} seeded`);
+    check('page 2 shows another min(20, total - 20) rows',
+          (await rows(page)) === Math.min(20, Math.max(0, total - 20)),
+          `${await rows(page)} rows, ${total} total`);
     const secondPage = await page.eval(
       `document.querySelector('.desk-queue-list .desk-continue-row').dataset.queueName`);
     check('page 2 has DIFFERENT items from page 1', secondPage !== firstPage,
@@ -85,9 +87,14 @@ const rows = (page) => page.eval(
          return e ? e.textContent.trim() : ''; })()`);
     // seededPer+1 .. seededPer*2 of seededTotal — 21–40 of 45, in words rather
     // than as literals, so a different seed size still passes.
+    // The pager describes the WHOLE queue, not the seeded subset. A developer
+    // with a real backlog beside the seed is a legitimate environment, and the
+    // range must therefore be derived from `total` — which includes both. On a
+    // clean clone total IS the seed, so the two agree.
     const wantRange = new RegExp(
-      `\\b${20 + 1}\\s*[–-]\\s*${40}\\s+of\\s+${seededPresent}\\b`);
-    check('the range says where we are', wantRange.test(range), `${range} (want 21–40 of ${seededPresent})`);
+      `\\b${20 + 1}\\s*[–-]\\s*${40}\\s+of\\s+${total}\\b`);
+    check('the range says where we are', wantRange.test(range),
+          `${range} (want 21–40 of ${total})`);
     check('and the page counter agrees', /Page 2 of/.test(await page.eval(
       `document.querySelector('.desk-queue-pageno').textContent`)),
       await page.eval(`document.querySelector('.desk-queue-pageno').textContent`));
@@ -110,28 +117,30 @@ const rows = (page) => page.eval(
       await sleep(600);
       const n = await rows(page);
       check(`page size ${size} shows at most ${size}`, n <= size, `${n} rows`);
-      // Only assert an exact fill when the seed is genuinely bigger than the
-      // page; otherwise the page shows the remainder, which is correct.
-      if (size < seededPresent) {
-        check(`page size ${size} actually shows ${size}`, n === size, `${n} of ${seededPresent} seeded`);
+      // Only assert an exact fill when the QUEUE is bigger than the page; otherwise
+      // the page shows the remainder, which is correct. `total` rather than the
+      // seeded count, for the same reason as the range and last-page checks.
+      if (size < total) {
+        check(`page size ${size} actually shows ${size}`, n === size, `${n} of ${total} total`);
       }
     }
     await page.eval(`_deskQueueSetPer(20)`);
     await sleep(400);
 
     section('Last page');
-    // Page count and remainder computed from the SEEDED count, not the total,
-    // so the assertion is about pagination arithmetic rather than about
-    // whatever else may be in the queue.
-    const seedPages = Math.ceil(seededPresent / 20);
-    const expect = seededPresent - (seedPages - 1) * 20;
-    await page.eval(`_deskQueuePage(${seedPages})`);
+    // Page count and remainder computed from the WHOLE queue, which is what the
+    // pager actually pages. Using the seeded count was right on a clean clone
+    // and wrong beside a developer's real backlog — the pager would still be
+    // correct while the assertion failed.
+    const lastPage = Math.ceil(total / 20);
+    const expect = total - (lastPage - 1) * 20;
+    await page.eval(`_deskQueuePage(${lastPage})`);
     await sleep(800);
     const lastRows = await rows(page);
-    check(`the last seeded page holds the remainder (${expect})`, lastRows === expect,
-          `${lastRows} rows, expected ${expect} of ${seededPresent}`);
-    check('and the remainder is non-zero, so the assertion has teeth', expect > 0,
-          String(expect));
+    check(`the last page holds the remainder (${expect})`, lastRows === expect,
+          `${lastRows} rows, expected ${expect} of ${total}`);
+    check('and the remainder is non-zero, so the assertion has teeth',
+          expect > 0, String(expect));
     check('Next is disabled on the last page', await page.eval(
       `[...document.querySelectorAll('.desk-queue-pager button')]
         .some(b => /Next/.test(b.textContent) && b.disabled)`));
