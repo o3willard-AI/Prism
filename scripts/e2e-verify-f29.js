@@ -38,12 +38,11 @@ const check = (n, c, d) => {
 };
 const section = (s) => console.log('\n' + s);
 
-// The unique token a content filter must find.
-//
-// SEED.probe is in all 45 seeded files; SINGLE is in exactly one — the item
-// this run stages. Two tokens because "findable by content" and "a filter
-// narrows the queue to exactly one" are different claims, and only the second
-// needs a token whose match count is known to be 1.
+// The item this run stages gets a token that is NOT a substring of the probe,
+// so "the probe matches exactly the seeded corpus" is a closed set. They
+// originally shared a stem, the staged item matched the probe as well, and the
+// header correctly reported 46 while the assertion expected 45 — a real
+// inconsistency in the test's own premise, not a product fault.
 let SINGLE = null;
 
 async function typeFilter(page, text) {
@@ -85,7 +84,8 @@ const header = (page) => page.eval(
     // does not track empty directories, so on a fresh clone it does not exist
     // and a bare readdirSync below would throw ENOENT.
     SEED = seedCorpus(SEEDED_TOTAL, 'f29');
-    SINGLE = `${SEED.probe}single`;
+    // Not a substring of SEED.probe — see the note on SINGLE.
+    SINGLE = `zzsolo${Date.now().toString(36)}${process.pid}`;
 
     await page.goto(FRONT + '/prism/');
     await page.waitFor("document.getElementById('desk-content')", 15000, 'desk');
@@ -235,8 +235,18 @@ const header = (page) => page.eval(
     // queue directory is removed too if this run created it, so the vault is
     // left exactly as it was found. That is what makes a second run on the same
     // clone meaningful.
+    // Staging writes TWO files: the queue item and an immutable SOURCE mirror
+    // under source/unordereds/. Cleaning only the queue left the mirror behind,
+    // so every F29 run left residue in the vault even when the queue was empty
+    // — which is what the gate's "run twice, prove no residue" caught.
     if (stagedName) {
-      try { fs.unlinkSync(path.join(Q, stagedName)); } catch (e) {}
+      const stem = stagedName.replace(/\.md$/, '');
+      for (const dir of ['ingestion/unprocessed', 'source/unordereds']) {
+        for (const n of [stagedName, `${stem}.md`]) {
+          try { fs.unlinkSync(path.join(ROOT, 'prism', 'vault', dir, n)); }
+          catch (e) { /* not there */ }
+        }
+      }
     }
     cleanCorpus(SEED);
   }
