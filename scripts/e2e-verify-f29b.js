@@ -14,7 +14,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const env = require('./lib/env.js');
 const { ROOT, FRONT } = env;
+const { seedCorpus, cleanCorpus } = require('./lib/seed-queue.js');
 const Q = path.join(ROOT, 'prism', 'vault', 'ingestion', 'unprocessed');
+
+// This suite's own corpus. The queue directory is gitignored and ships empty,
+// so every size below is a property of WHAT WAS SEEDED rather than of
+// whatever a developer happened to accumulate. See scripts/lib/seed-queue.js.
+let SEED = null;
+const SEEDED_TOTAL = 45;      // must match SEED_COUNT in seed-queue.js
+const PER_DEFAULT = 20;
 
 let pass = 0, fail = 0;
 const check = (n, c, d) => {
@@ -30,16 +38,35 @@ const rows = (page) => page.eval(
   const page = await b.newPage();
   await page.ready();
   try {
+    // Seed BEFORE the page loads. seedCorpus creates the directory too: it is
+    // gitignored, and git does not track empty directories, so on a fresh clone
+    // it does not exist and a bare readdirSync would throw ENOENT.
+    SEED = seedCorpus(SEEDED_TOTAL, 'f29b');
+
     await page.goto(FRONT + '/prism/');
     await page.waitFor("document.getElementById('desk-content')", 15000, 'desk');
     await sleep(2500);
 
     const total = await page.eval('_deskQueue.all.length');
     const per = await page.eval('_deskQueue.per');
-    console.log(`\n  queue: ${total} items, page size ${per}`);
+    const seededPresent = await page.eval(
+      `_deskQueue.all.filter(f => f.name.includes(${JSON.stringify(SEED.probe)})).length`);
+    console.log(`\n  seeded ${SEED.files.length} files, probe ${SEED.probe}`);
+    console.log(`  queue: ${total} items, page size ${per}`);
+    check('the seeded corpus is what the suite is measuring',
+          seededPresent === SEEDED_TOTAL && total >= SEEDED_TOTAL,
+          `${seededPresent} seeded, ${total} total`);
+    check('the page size starts at the documented default',
+          per === PER_DEFAULT, String(per));
 
     section('A page is a page');
-    check('the default page shows 20 rows', (await rows(page)) === 20, String(await rows(page)));
+    // min(20, total): with 45 seeded on a clean clone this is 20, but written so
+    // the assertion describes the rule rather than the number that happens to
+    // be there. A developer's own backlog counts too — the pager pages
+    // whatever is in the queue.
+    check('the default page shows min(20, total) rows',
+          (await rows(page)) === Math.min(20, total),
+          `${await rows(page)} rows, ${total} total`);
     check('and never more than the page size',
           (await rows(page)) <= per, `${await rows(page)} > ${per}`);
 
@@ -48,7 +75,9 @@ const rows = (page) => page.eval(
       `document.querySelector('.desk-queue-list .desk-continue-row').dataset.queueName`);
     await page.eval(`_deskQueuePage(2)`);
     await sleep(1200);
-    check('page 2 shows another 20', (await rows(page)) === 20, String(await rows(page)));
+    check('page 2 shows another min(20, total - 20) rows',
+          (await rows(page)) === Math.min(20, Math.max(0, total - 20)),
+          `${await rows(page)} rows, ${total} total`);
     const secondPage = await page.eval(
       `document.querySelector('.desk-queue-list .desk-continue-row').dataset.queueName`);
     check('page 2 has DIFFERENT items from page 1', secondPage !== firstPage,
@@ -56,7 +85,16 @@ const rows = (page) => page.eval(
     const range = await page.eval(
       `(() => { const e = document.querySelector('.desk-queue-range');
          return e ? e.textContent.trim() : ''; })()`);
-    check('the range says where we are', /21\s*[–-]\s*40 of/.test(range), range);
+    // seededPer+1 .. seededPer*2 of seededTotal — 21–40 of 45, in words rather
+    // than as literals, so a different seed size still passes.
+    // The pager describes the WHOLE queue, not the seeded subset. A developer
+    // with a real backlog beside the seed is a legitimate environment, and the
+    // range must therefore be derived from `total` — which includes both. On a
+    // clean clone total IS the seed, so the two agree.
+    const wantRange = new RegExp(
+      `\\b${20 + 1}\\s*[–-]\\s*${40}\\s+of\\s+${total}\\b`);
+    check('the range says where we are', wantRange.test(range),
+          `${range} (want 21–40 of ${total})`);
     check('and the page counter agrees', /Page 2 of/.test(await page.eval(
       `document.querySelector('.desk-queue-pageno').textContent`)),
       await page.eval(`document.querySelector('.desk-queue-pageno').textContent`));
@@ -79,19 +117,30 @@ const rows = (page) => page.eval(
       await sleep(600);
       const n = await rows(page);
       check(`page size ${size} shows at most ${size}`, n <= size, `${n} rows`);
-      if (size <= 40) check(`page size ${size} actually shows ${size}`, n === size, `${n}`);
+      // Only assert an exact fill when the QUEUE is bigger than the page; otherwise
+      // the page shows the remainder, which is correct. `total` rather than the
+      // seeded count, for the same reason as the range and last-page checks.
+      if (size < total) {
+        check(`page size ${size} actually shows ${size}`, n === size, `${n} of ${total} total`);
+      }
     }
     await page.eval(`_deskQueueSetPer(20)`);
     await sleep(400);
 
     section('Last page');
-    const pages = Math.ceil(total / 20);
-    await page.eval(`_deskQueuePage(${pages})`);
+    // Page count and remainder computed from the WHOLE queue, which is what the
+    // pager actually pages. Using the seeded count was right on a clean clone
+    // and wrong beside a developer's real backlog — the pager would still be
+    // correct while the assertion failed.
+    const lastPage = Math.ceil(total / 20);
+    const expect = total - (lastPage - 1) * 20;
+    await page.eval(`_deskQueuePage(${lastPage})`);
     await sleep(800);
     const lastRows = await rows(page);
-    const expect = total - (pages - 1) * 20;
     check(`the last page holds the remainder (${expect})`, lastRows === expect,
-          `${lastRows} rows, expected ${expect}`);
+          `${lastRows} rows, expected ${expect} of ${total}`);
+    check('and the remainder is non-zero, so the assertion has teeth',
+          expect > 0, String(expect));
     check('Next is disabled on the last page', await page.eval(
       `[...document.querySelectorAll('.desk-queue-pager button')]
         .some(b => /Next/.test(b.textContent) && b.disabled)`));
@@ -104,7 +153,7 @@ const rows = (page) => page.eval(
     await sleep(400);
     await page.eval(`(() => {
       const f = document.getElementById('desk-queue-filter');
-      f.value = 'epiphany';
+      f.value = ${JSON.stringify(SEED.probe)};
       f.dispatchEvent(new InputEvent('input', { bubbles: true }));
     })()`);
     // Wait for the scan to report rather than sleeping a guess.
@@ -112,6 +161,7 @@ const rows = (page) => page.eval(
       `(() => { const h = document.querySelector('[data-queue-count]');
          return h && /\\d+ of \\d+ match/.test(h.textContent); })()`,
       30000, 'the queue filter to report a match count');
+    void seededPresent;
     await sleep(600);
     check('a new filter resets to page 1', (await page.eval('_deskQueue.page')) === 1,
           String(await page.eval('_deskQueue.page')));
@@ -146,7 +196,13 @@ const rows = (page) => page.eval(
     const errs = page.consoleMsgs.filter(m => m.type === 'error');
     check('no console errors', errs.length === 0,
           errs.map(e => e.text).join(' | ').slice(0, 140));
-  } finally { await b.close(); }
+  } finally {
+    await b.close();
+    // Remove ONLY what this run created, and the directory too if this run
+    // created it — so the vault is exactly as found and a second run on the
+    // same clone proves the seed/cleanup round-trips.
+    cleanCorpus(SEED);
+  }
   console.log(`\n${pass}/${pass + fail} checks passed`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error('ERR:', e.message); process.exit(1); });

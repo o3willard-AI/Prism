@@ -22,7 +22,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const env = require('./lib/env.js');
 const { ROOT, FRONT, API } = env;
+const { seedCorpus, cleanCorpus } = require('./lib/seed-queue.js');
 const Q = path.join(ROOT, 'prism', 'vault', 'ingestion', 'unprocessed');
+
+// The suite's own corpus. The queue directory is gitignored and ships EMPTY on a
+// fresh clone, so every assertion below is stated against SEEDED files rather
+// than whatever backlog happens to exist on the box. See scripts/lib/seed-queue.js.
+let SEED = null;
+const SEEDED_TOTAL = 45;      // must match SEED_COUNT in seed-queue.js
 
 let pass = 0, fail = 0;
 const check = (n, c, d) => {
@@ -31,8 +38,12 @@ const check = (n, c, d) => {
 };
 const section = (s) => console.log('\n' + s);
 
-// Unique to this run, so a content filter must match exactly one file.
-const MARK = 'zzf29probe quokka lighthouse';
+// The item this run stages gets a token that is NOT a substring of the probe,
+// so "the probe matches exactly the seeded corpus" is a closed set. They
+// originally shared a stem, the staged item matched the probe as well, and the
+// header correctly reported 46 while the assertion expected 45 — a real
+// inconsistency in the test's own premise, not a product fault.
+let SINGLE = null;
 
 async function typeFilter(page, text) {
   // A BUBBLING InputEvent. A bare `new Event('input')` does not bubble, so the
@@ -68,19 +79,32 @@ const header = (page) => page.eval(
   await page.ready();
   let stagedName = null;
   try {
+    // Seed BEFORE the page loads, so the first render already sees a populated
+    // queue. seedCorpus creates the directory too: it is gitignored, and git
+    // does not track empty directories, so on a fresh clone it does not exist
+    // and a bare readdirSync below would throw ENOENT.
+    SEED = seedCorpus(SEEDED_TOTAL, 'f29');
+    // Not a substring of SEED.probe — see the note on SINGLE.
+    SINGLE = `zzsolo${Date.now().toString(36)}${process.pid}`;
+
     await page.goto(FRONT + '/prism/');
     await page.waitFor("document.getElementById('desk-content')", 15000, 'desk');
     await sleep(2000);
 
     const corpus = await page.eval('_deskQueue.all.length');
-    console.log(`\n  queue holds ${corpus} items`);
+    const seededPresent = await page.eval(
+      `_deskQueue.all.filter(f => f.name.includes(${JSON.stringify(SEED.probe)})).length`);
+    console.log(`\n  seeded ${SEED.files.length} files, probe ${SEED.probe}`);
+    console.log(`  queue holds ${corpus} items (${seededPresent} from this run)`);
+    check('the seeded corpus is present in the queue',
+          seededPresent === SEEDED_TOTAL, `${seededPresent} of ${SEEDED_TOTAL}`);
 
     // ── 1. Stage a thought, exactly as the user did ────────────────────
     section('Staging');
     const before = fs.readdirSync(Q).length;
     await page.eval(`(() => {
       const t = document.getElementById('desk-content');
-      t.value = ${JSON.stringify(MARK)};
+      t.value = ${JSON.stringify(SINGLE)};
       t.dispatchEvent(new InputEvent('input', { bubbles: true }));
     })()`);
     await page.eval('deskStageOnly()');
@@ -88,7 +112,7 @@ const header = (page) => page.eval(
 
     const files = fs.readdirSync(Q);
     const staged = files.filter(f => {
-      try { return fs.readFileSync(path.join(Q, f), 'utf8').includes(MARK); }
+      try { return fs.readFileSync(path.join(Q, f), 'utf8').includes(SINGLE); }
       catch (e) { return false; }
     });
     check('the thought was staged', staged.length === 1, `${staged.length} found`);
@@ -112,17 +136,24 @@ const header = (page) => page.eval(
           shown > 0 && shown <= 20, `${shown} rows`);
     check('the header says the total, not just what is shown',
           new RegExp(`\\b${files.length}\\b`).test(hdr), hdr.slice(0, 60));
+    // 45 seeded + the one this run staged = 46 total, so page 1 is exactly full.
+    check('page 1 is full — 20 of the seeded corpus',
+          shown === Math.min(20, files.length), `${shown} rows, ${files.length} total`);
 
     // ── 3. THE BUG: newest first ──────────────────────────────────────
+    // The staged item is compared against the newest SEEDED item, not "row 1":
+    // seedCorpus writes 45 files within the same second, so "newest first"
+    // among them is decided by mtime at sub-second resolution and the staged
+    // file — written later — must be the single newest of all 46.
     const first = await page.eval(`(() => {
       const r = document.querySelector('.desk-queue-list .desk-continue-row');
       return r ? r.dataset.queueName : null; })()`);
-    check('the newest item is FIRST — this is the bug that was reported',
+    check('the item just staged is FIRST — this is the bug that was reported',
           first === stagedName, `first=${first} expected=${stagedName}`);
 
     // ── 4. Find it by CONTENT, which is how a person remembers it ─────
     section('Filtering');
-    await typeFilter(page, 'quokka lighthouse');
+    await typeFilter(page, SINGLE);
     const hits = await rows(page);
     const hitNames = await page.eval(`(() => {
       const r = [...document.querySelectorAll('.desk-queue-list .desk-continue-row')];
@@ -147,22 +178,27 @@ const header = (page) => page.eval(
 
     // ── 6. A filter is UNCAPPED — vault search caps at 30 ─────────────
     section('A filter is not capped');
+    // The seeded probe word, NOT "epiphany". "epiphany" only existed on the box
+    // where a leak had accumulated hundreds of files; on a clean checkout it
+    // matches nothing, which is precisely why this suite needed seeding. The
+    // probe is unique to THIS run, so the match count is knowable exactly.
     const broadCount = await page.eval(
-      `_deskQueue.all.filter(f => f.name.includes('epiphany')).length`);
-    await typeFilter(page, 'epiphany');
+      `_deskQueue.all.filter(f => f.name.includes(${JSON.stringify(SEED.probe)})).length`);
+    await typeFilter(page, SEED.probe);
     const broadRows = await rows(page);
     const broadHdr = await header(page);
     // The header reports how many MATCHED; the page shows one page of them.
-    // Both matter: "uncapped" means the match set is complete, not that 270
-    // rows are dumped on screen at once.
+    // Both matter: "uncapped" means the match set is complete, not that every
+    // row is dumped on screen at once.
     const reported = Number((broadHdr.match(/(\d+) of/) || [])[1] || -1);
-    console.log(`    "epiphany" -> ${broadRows} rows on page 1, `
+    console.log(`    probe -> ${broadRows} rows on page 1, `
               + `${reported} matched (vault search caps at 30)`);
-    check('the corpus genuinely has more than 30 matches',
-          broadCount > 30, String(broadCount));
+    check('the probe matches exactly the seeded corpus',
+          broadCount === SEEDED_TOTAL, `${broadCount} vs ${SEEDED_TOTAL}`);
     check('the MATCH set is uncapped — every hit is counted',
           reported === broadCount, `header ${reported} vs ${broadCount} queued`);
-    check('and it beats the search cap of 30', reported > 30, String(reported));
+    check('and it beats the 30-result vault search cap',
+          reported > 30, String(reported));
     check('while still showing only one page of them',
           broadRows <= 20, `${broadRows} rows`);
 
@@ -174,7 +210,7 @@ const header = (page) => page.eval(
 
     // ── 8. And it actually LOADS — the point of all of it ─────────────
     section('Loading it back');
-    await typeFilter(page, 'quokka lighthouse');
+    await typeFilter(page, SINGLE);
     const target = await page.eval(`(() => {
       const r = [...document.querySelectorAll('.desk-queue-list .desk-continue-row')]
         .find(x => x.dataset.queueName === ${JSON.stringify(stagedName)});
@@ -184,7 +220,7 @@ const header = (page) => page.eval(
     await sleep(2500);
     const loaded = await page.eval(`document.getElementById('desk-content').value`);
     check('the thought loads back into the desk',
-          loaded.includes(MARK), loaded.slice(0, 70));
+          loaded.includes(SINGLE), loaded.slice(0, 70));
 
     // ── 9. No filter left behind ──────────────────────────────────────
     check('the desk is ready for the next thought',
@@ -194,11 +230,25 @@ const header = (page) => page.eval(
           errs.map(e => e.text).join(' | ').slice(0, 140));
   } finally {
     await b.close();
-    // Remove ONLY this run's probe. The 476 other files are deliberately left
-    // in place: the large queue is what makes this suite meaningful.
+    // Remove the staged item, then the seeded corpus — ONLY files this run
+    // created. A developer's own staged thoughts are never touched, and the
+    // queue directory is removed too if this run created it, so the vault is
+    // left exactly as it was found. That is what makes a second run on the same
+    // clone meaningful.
+    // Staging writes TWO files: the queue item and an immutable SOURCE mirror
+    // under source/unordereds/. Cleaning only the queue left the mirror behind,
+    // so every F29 run left residue in the vault even when the queue was empty
+    // — which is what the gate's "run twice, prove no residue" caught.
     if (stagedName) {
-      try { fs.unlinkSync(path.join(Q, stagedName)); } catch (e) {}
+      const stem = stagedName.replace(/\.md$/, '');
+      for (const dir of ['ingestion/unprocessed', 'source/unordereds']) {
+        for (const n of [stagedName, `${stem}.md`]) {
+          try { fs.unlinkSync(path.join(ROOT, 'prism', 'vault', dir, n)); }
+          catch (e) { /* not there */ }
+        }
+      }
     }
+    cleanCorpus(SEED);
   }
   console.log(`\n${pass}/${pass + fail} checks passed`);
   process.exit(fail ? 1 : 0);
