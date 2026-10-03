@@ -1363,7 +1363,15 @@ class PrismHandler(http.server.BaseHTTPRequestHandler):
             files = [
                 {"name": f.name,
                  "path": str(f.relative_to(DATA_ROOT)).replace("\\", "/"),
-                 "type": "dir" if f.is_dir() else "file"}
+                 "type": "dir" if f.is_dir() else "file",
+                 # F29: modification time, so a client can order a list by when
+                 # a thing actually arrived. Filenames carry a date but no
+                 # time and a random id, so two files created on the same day
+                 # had NO defined order — "newest first" silently degraded to
+                 # "highest random id". The fact belongs here, where it is
+                 # known, rather than being guessed in the browser. Only for
+                 # files: a directory's mtime means something else entirely.
+                 **({} if f.is_dir() else {"modified": int(f.stat().st_mtime)})}
                 for f in sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name.lower()))
                 if f.is_dir() or f.suffix == ".md"
             ]

@@ -491,6 +491,58 @@
     padding: 10px 0; border-bottom: 1px solid var(--border); }
   .desk-continue-row:last-child { border-bottom: none; }
   .desk-continue-row:hover { background: var(--bg-tertiary); border-radius: 8px; }
+  /* ── The staged queue ────────────────────────────────────────────────
+     A queue is read top-down, so it collapses rather than paginates, and it
+     gets its own UNBOUNDED filter — vault search caps at 30 results, which
+     with a real backlog leaves most of the queue unreachable. */
+  .desk-queue { max-height: 60vh; display: flex; flex-direction: column; }
+  .desk-queue-count { font-size: 12px; color: var(--text-secondary); }
+  .desk-queue-filter {
+    width: 100%; box-sizing: border-box; margin: 0 0 8px;
+    padding: 8px 11px; font-size: 13px; font-family: inherit;
+    color: var(--text-primary); background: var(--bg-secondary);
+    border: 1px solid var(--border); border-radius: 8px;
+  }
+  .desk-queue-filter:focus { outline: none; border-color: var(--accent); }
+  .desk-queue-filter::placeholder { color: var(--text-secondary); }
+  .desk-queue-list { overflow-y: auto; flex: 1; min-height: 0; }
+  .desk-queue-list .desk-continue-row { padding: 8px 0; }
+  /* The day is what a person scans for: "was that Tuesday?" */
+  .desk-queue-day {
+    font-size: 11px; color: var(--text-secondary); flex-shrink: 0;
+    min-width: 74px; font-variant-numeric: tabular-nums;
+  }
+  .desk-queue-label { flex: 1; font-size: 13.5px; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .desk-queue-more { padding-top: 8px; border-top: 1px solid var(--border);
+    margin-top: 6px; }
+  /* Pagination, one page at a time. The first attempt had a single "Show N
+     older more" button that rendered every remaining row — which is not
+     pagination, and turned a 20-row page into 500 scrollable rows. */
+  .desk-queue-pager { padding-top: 8px; border-top: 1px solid var(--border);
+    margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+  .desk-queue-pager-row { display: flex; align-items: center; gap: 8px;
+    flex-wrap: wrap; justify-content: space-between; }
+  .desk-queue-range { font-size: 12px; color: var(--text-secondary);
+    font-variant-numeric: tabular-nums; }
+  .desk-queue-size { font-size: 12px; color: var(--text-secondary);
+    display: inline-flex; align-items: center; gap: 5px; }
+  .desk-queue-size select {
+    font-size: 12px; font-family: inherit; padding: 3px 6px;
+    color: var(--text-primary); background: var(--bg-secondary);
+    border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+  }
+  .desk-queue-pageno { font-size: 12px; color: var(--text-secondary);
+    font-variant-numeric: tabular-nums; }
+  .desk-queue-pager button[disabled] { opacity: 0.4; cursor: not-allowed; }
+  .desk-queue-empty { padding: 14px 2px; font-size: 13px;
+    color: var(--text-secondary); }
+  /* ── F29b: crafting vocabulary ─────────────────────────────────────────
+     The Table is where a thought is CRAFTED into an artifact. "Lens" is the
+     internal shape of that output, not what the human is choosing, so the
+     queue's dead-end hint is now an instruction rather than a deflection to a
+     picker. The interrogation loop — where the agent asks its own questions —
+     is the next piece of work and lands on this same door. */
   .desk-pause-tag { font-size: 11px; color: var(--accent); border: 1px solid var(--accent);
     border-radius: 10px; padding: 1px 8px; flex-shrink: 0; }
   .wf-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-secondary);
