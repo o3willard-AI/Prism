@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from extract import UnsupportedDocument, extract_document  # noqa: E402
 import agentic  # noqa: E402
 import adjudicate  # noqa: E402
+import interrogate  # noqa: E402
 import thresholds  # noqa: E402
 
 PORT = 8082
@@ -1216,6 +1217,52 @@ class PrismHandler(http.server.BaseHTTPRequestHandler):
             "log_path": log_rel,
         })
 
+    def handle_interrogate(self):
+        """Ask the agent what the human actually wants, BEFORE a lens is chosen.
+
+        The counterpart to handle_adjudicate. That one runs after an artifact
+        exists and can only say yes or no; this one runs first and shapes what
+        gets built. A lens is a contract with every downstream agent that will
+        read it, so a lens written from one paragraph with nobody asked is a
+        guess — and the agent is the one who can see the gaps.
+
+        Returns the agent's proposed shape, what it thinks the outcome is, and
+        the questions it needs answered. An unconfigured agent is reported as
+        UNAVAILABLE rather than approximated: substituting a deterministic guess
+        here would recreate exactly the bug that /classify represents.
+        """
+        body = self.read_body()
+        if body is None:
+            return self.send_error_json(400, "Invalid JSON")
+        raw = (body.get("raw") or body.get("content") or "").strip()
+        if not raw:
+            return self.send_error_json(400, "raw thought required")
+        answers = body.get("answers") or []
+        if not isinstance(answers, list):
+            return self.send_error_json(400, "answers must be a list")
+        lens_hint = (body.get("lens") or "").strip()
+
+        try:
+            result = interrogate.interrogate(raw, answers, lens_hint)
+        except agentic.AgentConfigError as exc:
+            result = {
+                "ok": False, "asked": False, "verdict": "unavailable",
+                "selection": {"selection": "none", "why": ""},
+                "agent_error": str(exc), "questions": [],
+            }
+        except Exception as exc:            # never 500 a human's own typing
+            result = {
+                "ok": False, "asked": False, "verdict": "unavailable",
+                "selection": {"selection": "none", "why": ""},
+                "agent_error": f"unexpected error interrogating: {type(exc).__name__}",
+                "questions": [],
+            }
+
+        # The answers travel with the reply so the client holds the exchange and
+        # not just the last turn.
+        result["answers"] = answers
+        self.send_json(200, result)
+
     def handle_adjudicate(self):
         """F24: ask the AGENT whether a pasted artifact meets the bar.
 
@@ -1840,6 +1887,11 @@ Then
             # F24: ask the configured agent whether a pasted artifact meets
             # this lens's clarity bar, and record the answer.
             self.handle_adjudicate()
+
+        elif path == "/interrogate":
+            # F31: the agent asks the human what they actually want, BEFORE a
+            # lens is chosen. The other half of the agent's job in Prism.
+            self.handle_interrogate()
 
         elif path == "/verify":
             body = self.read_body()
