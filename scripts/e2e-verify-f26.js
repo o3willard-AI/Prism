@@ -27,6 +27,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const env = require('./lib/env.js');
 const { ROOT, FRONT, STUB_PORT, STUB_HOST } = env;
 const { startStub, freePort } = require('./lib/stub-agent.js');
+const { snapshotVault, cleanNewVaultFiles } = require('./lib/vault-snapshot.js');
 const ADIR = path.join(ROOT, 'prism', 'vault', 'knowledge', 'integrations', 'agentic');
 // This suite is the ONLY thing that should ever arm an agent config in the
 // vault. It installs walkstub.md in setup and removes it in teardown — an
@@ -149,7 +150,7 @@ const GOOD_PRD = [
   const b = await launch();
   const page = await b.newPage();
   await page.ready();
-  const today = new Date().toISOString().slice(0, 10);
+  const vaultBefore = snapshotVault();
   try {
     await page.goto(FRONT + '/prism/');
     await page.waitFor('document.getElementById("desk-content")', 10000, 'desk');
@@ -281,13 +282,15 @@ const GOOD_PRD = [
     // Free the stub port BY NUMBER. Killing our own child handle would free
     // nothing when the holder is a stub from a previous run.
     freePort(STUB_PORT);
-    for (const d of ['requirements', 'hypotheses', 'rationalizations', 'source/unordereds']) {
-      const dir = path.join(ROOT, 'prism', 'vault', d);
-      if (!fs.existsSync(dir)) continue;
-      for (const f of fs.readdirSync(dir)) {
-        if (f.startsWith(today + '-')) { try { fs.unlinkSync(path.join(dir, f)); } catch (e) {} }
-      }
-    }
+    // Snapshot ownership by exact pre-run paths, not by date. Date-prefix
+    // deletion can remove the user's own same-day artifact; the snapshot helper
+    // removes only files absent before this suite started and checks that every
+    // pre-existing file remains byte-identical.
+    const cleanup = cleanNewVaultFiles(vaultBefore);
+    for (const problem of cleanup.remaining) console.error('  RESIDUE: ' + problem);
+    if (cleanup.remaining.length) fail++;
+    check('only artifacts this run created were removed', cleanup.remaining.length === 0,
+          cleanup.remaining.join('; '));
   }
   console.log(`\n${pass}/${pass + fail} checks passed`);
   process.exit(fail ? 1 : 0);
