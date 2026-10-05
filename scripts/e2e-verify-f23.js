@@ -204,9 +204,17 @@ print(json.dumps(out))
       check('the panel shows more than one distinct value',
             /95%/.test(panel) && /85%/.test(panel), panel.slice(0, 120));
       check('the panel says where to change them', /confidence-thresholds\.md/.test(panel));
+      // Count the LENS doors, not every `.desk-door`. F31 added a fourth
+      // interrogation door that legitimately uses the same class, so this suite
+      // went 61/62 — a hardcoded 3 that was really "and nothing else has a door".
+      // Scope the assertion to what it means: the lenses are all still offered.
+      const lensDoors = await page.eval(
+        `Array.from(document.querySelectorAll('.desk-doors .desk-door'))`
+        + `.map(b => b.dataset && b.dataset.lens).filter(Boolean).sort().join(',')`);
       check('the desk still renders its lens doors',
-            (await page.eval('document.querySelectorAll(".desk-door").length')) === 3,
-            String(await page.eval('document.querySelectorAll(".desk-door").length')));
+            /hypotheses/.test(lensDoors) && /requirements/.test(lensDoors)
+            && /rationalizations/.test(lensDoors),
+            lensDoors);
 
       // And the number in the prompt is the one for THAT lens.
       const hyp = await firstPrompt('hypotheses');

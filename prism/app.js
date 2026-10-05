@@ -507,6 +507,23 @@ async function renderDesk(area) {
         <div class="desk-doors" id="desk-doors">${lensDoors}</div>
         ${thresholdPanel}
 
+        <!-- F31: the agent asks before a lens is chosen. Deliberately ABOVE the
+             lens doors and styled as a peer, not a footnote: picking a lens
+             without knowing what you are building is how you end up with a
+             well-shaped artifact that answers the wrong question. -->
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+          <button class="desk-door" id="desk-interrogate-btn"
+            onclick="deskInterrogate()"
+            title="Have the agent ask what you actually need, before choosing a lens">
+            🔍 Ask the agent what I'm actually building
+          </button>
+          <div style="font-size:11.5px;color:var(--text-secondary);margin-top:5px">
+            A lens is a contract with the agents that read it later — context, boundaries, and a
+            roadmap. One paragraph is not enough to write one. This asks first.
+          </div>
+          <div id="desk-interrogate-out"></div>
+        </div>
+
         <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
           <button class="btn btn-ghost btn-sm" onclick="deskStageOnly()"
             title="Save to the unprocessed queue without creating a lens — refract it later">
@@ -853,28 +870,41 @@ async function _deskDiscardQueued(path) {
   }
 }
 
-async function deskStageOnly() {
+// Returns the staged artifact's path, or null. Callers that only want the toast
+// ignore it; the interrogation handoff needs it, because the workflow re-reads
+// the artifact from its path on every start and will not accept a preload.
+async function deskStageOnly({ quiet = false } = {}) {
   // Ingest without processing. The Ingest page used to be the only way to
   // stop here; it is retired, so the desk owns this. Useful when raw thought
   // arrives faster than it can be lensed — hold it, refract it later.
   const errEl = document.getElementById('desk-error');
   const content = _desk.content.trim();
   errEl.textContent = '';
-  if (!content) { errEl.textContent = 'Add the raw thought first — even staged, it needs to be something.'; return; }
+  if (!content) {
+    if (!quiet) errEl.textContent = 'Add the raw thought first — even staged, it needs to be something.';
+    return null;
+  }
 
+  let res = null;
   try {
-    await ingestArtifact({
+    res = await ingestArtifact({
       type: _desk.type,
       title: autoName('seed'),
       content,
       is_private: _deskPrivate,
     });
-  } catch (e) { errEl.textContent = e.message; return; }
+  } catch (e) {
+    if (!quiet) errEl.textContent = e.message;
+    return null;
+  }
 
   _desk = { content: '', type: 'unordered', lens: null, fileLoaded: null };
   _deskPrivate = false;
-  toast('📥 Staged in the queue — refract it when you are ready');
+  // A quiet stage is a step inside another action (the interrogation handoff),
+  // not a thing the human asked for — a toast about it would be noise.
+  if (!quiet) toast('📥 Staged in the queue — refract it when you are ready');
   await renderDesk(document.getElementById('content-area'));
+  return (res && (res.path || (res.artifact && res.artifact.path))) || null;
 }
 
 async function deskSubmit() {
@@ -3930,6 +3960,356 @@ function setTopbarAction(html) {
 // confirms-or-corrects — and their correction is final (state is sticky).
 //
 // Backend: POST /classify {content, filename} -> {type, confidence, basis}
+
+// ═══ F31: INTERROGATION ═══════════════════════════════════════════
+//
+// The agent's half of the job. Until now Prism only ever asked an agent to
+// JUDGE a finished artifact (/adjudicate), which meant the human picked a lens
+// from a menu and filled it in before anyone knew what they were building. The
+// agent saw the result and could only say yes or no.
+//
+// This inverts it. The agent reads the raw thought, says what it thinks the
+// outcome is, proposes a shape with a reason, and asks for what it cannot infer.
+// The human answers. Only then is there something worth writing down.
+//
+// Two rules this obeys without exception, both from things that went wrong:
+//
+//   1. NO AGENT MEANS NO INTERROGATION, NOT A FAKE ONE. If no agent is
+//      configured the card says so plainly and the human may proceed anyway. It
+//      never substitutes a heuristic for the agent's judgment — that
+//      substitution is exactly what /classify does, and it is why this card sits
+//      next to the doors instead of replacing them.
+//
+//   2. SILENCE IS NOT CONSENT. A reply we cannot parse is shown as unclear, not
+//      treated as "ready". An unreadable answer must never advance a human's
+//      work as though the agent had approved it.
+//
+// State lives on _desk so a re-render of the Table does not lose the exchange.
+
+const _INTERROGATE_STATE = { busy: false, reply: null, answers: [], raw: '' };
+
+// Ask one round. Re-renders the card in place; never navigates.
+async function deskInterrogate() {
+  const raw = (_desk.content || document.getElementById('desk-content')?.value || '').trim();
+  if (raw.length < 12) {
+    _deskInterrogateUnavailable(
+      'Give me something to work with first — a sentence or two about what is on your mind.');
+    return;
+  }
+  if (_INTERROGATE_STATE.busy) return;
+  _INTERROGATE_STATE.busy = true;
+  // The raw text is pinned: the human may keep typing while the agent thinks,
+  // and this round was asked about what they had actually written.
+  _INTERROGATE_STATE.raw = raw;
+  _deskInterrogateRender();
+
+  try {
+    const r = await apiPost('/interrogate', {
+      raw: _INTERROGATE_STATE.raw,
+      answers: _INTERROGATE_STATE.answers,
+    });
+    _INTERROGATE_STATE.reply = r;
+    if (r && r.asked === false) {
+      _INTERROGATE_STATE.busy = false;
+      _deskInterrogateRender();
+      return;
+    }
+  } catch (e) {
+    _INTERROGATE_STATE.busy = false;
+    _INTERROGATE_STATE.reply = {
+      asked: false, verdict: 'unavailable',
+      agent_error: 'Could not reach Prism: ' + (e && e.message ? e.message : String(e)),
+      questions: [],
+    };
+    _deskInterrogateRender();
+    return;
+  }
+  _INTERROGATE_STATE.busy = false;
+  _deskInterrogateRender();
+}
+
+// Collect the typed answers and ask the next round.
+async function deskInterrogateAnswer() {
+  const r = _INTERROGATE_STATE.reply;
+  if (!r || !r.questions || !r.questions.length) return;
+  const answered = [];
+  for (let i = 0; i < r.questions.length; i++) {
+    const el = document.getElementById('desk-interrogate-a' + i);
+    const text = el ? el.value.trim() : '';
+    // A skipped question is not an empty string. Dropping it keeps the next
+    // round's prompt honest: the agent should not see a question the human
+    // declined to answer as though it had been answered "no".
+    if (text) answered.push({ question: r.questions[i], answer: text });
+  }
+  if (!answered.length) {
+    _deskInterrogateNote('Answer at least one question, or use “Not now”.');
+    return;
+  }
+  _INTERROGATE_STATE.answers = _INTERROGATE_STATE.answers.concat(answered);
+  await deskInterrogate();
+}
+
+// The human opts out of interrogation and just picks a door.
+function deskInterrogateSkip() {
+  _INTERROGATE_STATE.reply = null;
+  _INTERROGATE_STATE.answers = [];
+  _deskInterrogateRender();
+}
+
+// Use the agent's proposed shape: walk the matching lens door.
+function deskInterrogateUseShape() {
+  const shape = _INTERROGATE_STATE.reply && _INTERROGATE_STATE.reply.proposed_shape;
+  if (!shape) return;
+  const door = document.querySelector(`.desk-doors [data-lens="${CSS.escape(shape)}"]`)
+            || Array.from(document.querySelectorAll('.desk-doors .desk-door'))
+                 .find(b => (b.dataset && b.dataset.lens) === shape);
+  if (door) { door.click(); return; }
+  // No door for it. Say so rather than silently doing nothing — the agent
+  // suggested something the desk cannot currently build.
+  _deskInterrogateNote(
+    `The agent suggested "${shape}", but there is no lens door for it yet. ` +
+    `The answer is kept — pick a door below, or create that lens.`);
+}
+
+function _deskInterrogateNote(msg) {
+  let el = document.getElementById('desk-interrogate-note');
+  if (!el) { _deskInterrogateRender(); el = document.getElementById('desk-interrogate-note'); }
+  if (el) { el.textContent = msg; el.style.display = 'block'; }
+}
+
+function _deskInterrogateUnavailable(msg) {
+  _INTERROGATE_STATE.reply = {
+    asked: false, verdict: 'unavailable', agent_error: msg, questions: [],
+  };
+  _deskInterrogateRender();
+}
+
+function _deskInterrogateRender() {
+  const out = document.getElementById('desk-interrogate-out');
+  if (!out) return;
+  const S = _INTERROGATE_STATE;
+
+  if (S.busy) {
+    out.innerHTML = `<div class="desk-interrogate"><div class="desk-interrogate-busy">
+      🧭 The agent is reading what you wrote…</div></div>`;
+    return;
+  }
+  const r = S.reply;
+  if (!r) { out.innerHTML = ''; return; }
+
+  // ── No agent: say so, and get out of the way ──────────────────
+  if (r.asked === false) {
+    out.innerHTML = `<div class="desk-interrogate">
+      <div class="desk-interrogate-head">
+        <span class="desk-interrogate-who">The agent isn't available</span>
+      </div>
+      <div class="desk-interrogate-na">${escHtml(r.agent_error || '')}</div>
+      <div class="desk-interrogate-actions">
+        <button class="btn btn-ghost btn-sm" onclick="deskInterrogateSkip()">
+          Carry on without it — pick a lens below
+        </button>
+      </div>
+    </div>`;
+    return;
+  }
+
+  // ── Unreadable agent output: NOT approval ──────────────────────
+  if (r.parse_failed) {
+    out.innerHTML = `<div class="desk-interrogate">
+      <div class="desk-interrogate-head">
+        <span class="desk-interrogate-who">The agent's reply could not be read</span>
+        <span class="desk-interrogate-round">round ${r.round || 1}</span>
+      </div>
+      <div class="desk-interrogate-na">
+        It answered with something this version of Prism cannot parse, so it is treated as
+        <b>unclear</b> — not as agreement. Nothing has been approved and nothing has advanced.
+      </div>
+      <details style="margin-top:8px;font-size:12px">
+        <summary style="cursor:pointer;color:var(--text-secondary)">What it actually said</summary>
+        <pre style="white-space:pre-wrap;font-size:11.5px;color:var(--text-secondary);
+             margin-top:6px">${escHtml(r.raw || '')}</pre>
+      </details>
+      <div class="desk-interrogate-actions">
+        <button class="btn btn-ghost btn-sm" onclick="deskInterrogateSkip()">
+          Carry on without it — pick a lens below
+        </button>
+        <button class="btn btn-ghost btn-sm" onclick="deskInterrogate()">Ask again</button>
+      </div>
+    </div>`;
+    return;
+  }
+
+  const shapeNames = {
+    requirements: 'a requirement — something to build',
+    hypotheses: 'a hypothesis — a belief worth testing',
+    rationalizations: 'a rationalization — why it went the way it went',
+    'ux-bridge': 'a UX hand-off specification',
+  };
+  const questions = r.questions || [];
+  const ready = r.verdict === 'ready' || !questions.length;
+  const answeredCount = _INTERROGATE_STATE.answers.length;
+
+  let html = `<div class="desk-interrogate">
+    <div class="desk-interrogate-head">
+      <span class="desk-interrogate-who">🧭 ${escHtml(r.agent_title || r.agent || 'The agent')}</span>
+      <span class="desk-interrogate-round">round ${r.round || 1} of ${r.max_rounds || 4}${
+        answeredCount ? ` · ${answeredCount} answered` : ''}</span>
+    </div>`;
+
+  if (r.understanding) {
+    html += `<div class="desk-interrogate-heard">
+      <b>Here's what I think this is:</b> ${escHtml(r.understanding)}</div>`;
+  }
+  if (r.outcome) {
+    html += `<div class="desk-interrogate-outcome">
+      <b>A later agent reading the finished lens must be able to:</b><br>
+      ${escHtml(r.outcome)}</div>`;
+  }
+
+  if (r.verdict === 'unclear' && !questions.length) {
+    html += `<div class="desk-interrogate-na">
+      This does not cohere enough for me to aim at — and I'd rather say so than invent a
+      requirement you never had.</div>`;
+  }
+
+  if (answeredCount) {
+    html += `<div class="desk-interrogate-answers">`;
+    for (const a of _INTERROGATE_STATE.answers) {
+      html += `<div><em>${escHtml(a.question)}</em><br>→ ${escHtml(a.answer)}</div>`;
+    }
+    html += `</div>`;
+  }
+
+  if (questions.length) {
+    if (r.reasoning) {
+      html += `<div class="desk-interrogate-heard" style="color:var(--text-secondary)">
+        ${escHtml(r.reasoning)}</div>`;
+    }
+    for (let i = 0; i < questions.length; i++) {
+      html += `<div class="desk-interrogate-q">
+        <label class="desk-interrogate-q-label" for="desk-interrogate-a${i}">
+          ${escHtml(questions[i])}</label>
+        <textarea id="desk-interrogate-a${i}"
+          placeholder="In your own words — there is no wrong answer."></textarea>
+      </div>`;
+    }
+    if (r.at_last_round) {
+      html += `<div class="desk-interrogate-last">
+        That's my last round — you know what you want better than I can extract from a text box.
+        Carry on with a lens below, or tell me what to do with this.</div>`;
+    }
+    html += `<div class="desk-interrogate-actions">
+      <button class="btn btn-sm" onclick="deskInterrogateAnswer()">Answer and ask again →</button>
+      <button class="btn btn-ghost btn-sm" onclick="deskInterrogateSkip()">Not now</button>
+    </div>`;
+  } else {
+    // Ready. Two ways on, because the interrogation is a conversation but the
+    // finished artifact belongs with a lens — so the agent's shape is offered as
+    // the primary door, and the workflow chat (which keeps asking as it goes) is
+    // one click away for anyone who wants to keep going there instead.
+    html += `<div class="desk-interrogate-actions">`;
+    if (r.proposed_shape && shapeNames[r.proposed_shape]) {
+      html += `<button class="btn btn-sm" onclick="deskInterrogateUseShape()">
+        Use ${escHtml(shapeNames[r.proposed_shape])} →</button>`;
+      html += `<button class="btn btn-ghost btn-sm"
+        onclick="deskInterrogateHandoff('${escHtml(r.proposed_shape)}')">
+        Keep going in the workflow chat →</button>`;
+    }
+    html += `<button class="btn btn-ghost btn-sm" onclick="deskInterrogateSkip()">
+      Start over with a different thought</button></div>`;
+  }
+
+  if (r.proposed_shape && shapeNames[r.proposed_shape] && questions.length) {
+    html += `<div class="desk-interrogate-shape">
+      <b>My suggestion, once we've settled this:</b>
+      ${escHtml(shapeNames[r.proposed_shape])}
+      ${r.shape_reason ? `<br><span style="color:var(--text-secondary)">${escHtml(r.shape_reason)}</span>` : ''}
+    </div>`;
+  }
+  if (r.selection && r.selection.why) {
+    html += `<div class="desk-interrogate-last" style="opacity:.8">
+      Asked ${escHtml(r.selection.selection || 'an agent')} — ${escHtml(r.selection.why)}</div>`;
+  }
+  html += `<div id="desk-interrogate-note" style="display:none;color:#dc2626;
+           font-size:12px;margin-top:8px"></div>`;
+  html += `</div>`;
+
+  out.innerHTML = html;
+  if (ready && questions.length === 0) { /* nothing to focus */ }
+}
+
+// ── The doorway into the workflow chat ──────────────────────────────
+//
+// The second half of "both". Once the interrogation has produced an outcome and
+// a shape, the conversation belongs with the artifact: hand it to the lens,
+// carrying the whole exchange so the agent that picks it up can see what was
+// asked and why the shape was chosen.
+async function deskInterrogateHandoff(lens) {
+  const S = _INTERROGATE_STATE;
+  if (!S.reply) return;
+  // Capture everything up front. `deskStageOnly` re-renders the Table, which
+  // rebuilds the DOM — and `_desk` is reset wholesale by the stage. Reading
+  // `S.reply` or `S.answers` after that point reads whatever survived the
+  // re-render, not the conversation the human just had, so the provenance
+  // silently arrives empty.
+  const reply = S.reply;
+  const answers = S.answers.slice();
+  const summary = [];
+  if (reply.understanding) summary.push(`**Understood as:** ${reply.understanding}`);
+  if (reply.outcome) summary.push(`**Must enable an agent to:** ${reply.outcome}`);
+  if (reply.proposed_shape) {
+    summary.push(`**Proposed shape:** ${reply.proposed_shape}`
+      + (reply.shape_reason ? ` — ${reply.shape_reason}` : ''));
+  }
+  if (answers.length) {
+    summary.push('', '**Interrogation:**');
+    for (const a of answers) {
+      summary.push(`- *${a.question}*`, `  → ${a.answer}`);
+    }
+  }
+  // Prefer the PINNED raw text over the live textarea. The textarea is not a
+  // reliable source here: an intervening round re-renders the Table, and a human
+  // who edited or cleared the box in the meantime must not have their staged
+  // artifact silently replaced. `S.raw` is what the interrogation was actually
+  // asked about, so that is what belongs in the artifact — and it is the version
+  // the agent's understanding refers to.
+  const pre = document.getElementById('desk-content');
+  const base = (S.raw && S.raw.trim()) || (pre ? pre.value : '');
+  const body = base + (summary.length
+    ? '\n\n---\n' + summary.join('\n') : '');
+  _desk.content = body;
+
+  // Preloading `_chat.artifactContent` does NOT work, and pretending it does is
+  // how four assertions passed a review while the text went nowhere. The
+  // workflow re-fetches the artifact from `_chat.artifactPath` on every start
+  // (see the "Load artifact content fresh" block) and overwrites whatever was
+  // set here — so a preload is discarded the moment the chat opens.
+  //
+  // The only thing that survives is a real file at a real path, which is also
+  // the honest shape of the thing: an interrogation worth carrying is worth
+  // keeping. Stage it in the queue, hand the workflow that path, and the
+  // interrogation is both an input AND a durable record of why the lens was
+  // shaped this way.
+  const path = await deskStageOnly({ quiet: true });
+  _INTERROGATE_STATE.stagedPath = path;
+
+  const door = Array.from(document.querySelectorAll('.desk-doors .desk-door'))
+    .find(b => (b.dataset && b.dataset.lens) === lens);
+  if (door) { door.click(); return; }
+  if (typeof continueWorkflow === 'function') {
+    const cfg = (typeof LENS_CONFIGS !== 'undefined' && LENS_CONFIGS[lens]) || {};
+    const p = path || (cfg.path || `knowledge/lenses/${lens}.md`);
+    continueWorkflow(p, lens, 'desk-content');
+  }
+}
+
+// Used by F31 to reset between assertions.
+function _deskInterrogateReset() {
+  _INTERROGATE_STATE.busy = false;
+  _INTERROGATE_STATE.reply = null;
+  _INTERROGATE_STATE.answers = [];
+  _INTERROGATE_STATE.raw = '';
+}
 
 const _TYPE_ICONS = {
   unordered: '📝', formatted: '📄', dictation: '🎤',

@@ -496,6 +496,45 @@
      gets its own UNBOUNDED filter — vault search caps at 30 results, which
      with a real backlog leaves most of the queue unreachable. */
   .desk-queue { max-height: 60vh; display: flex; flex-direction: column; }
+
+  /* ── F31: interrogation ──────────────────────────────────────────
+     The agent's questions are the centre of the card: a human reading
+     "what am I even building?" deserves the same visual weight as the
+     thing they typed, not a footnote under it. The card is a
+     conversation, so it reads top-down: what I heard, what you must be
+     able to do, then what I still need from you. */
+  .desk-interrogate { border: 1px solid var(--accent); border-radius: 6px;
+                      padding: 14px 16px; margin: 12px 0; background: var(--bg-secondary); }
+  .desk-interrogate-head { display: flex; align-items: baseline; gap: 8px;
+                           flex-wrap: wrap; margin-bottom: 6px; }
+  .desk-interrogate-who { font-weight: 600; color: var(--accent); font-size: 13px; }
+  .desk-interrogate-round { font-size: 11px; color: var(--text-secondary); }
+  .desk-interrogate-heard { font-size: 13px; line-height: 1.5; margin: 4px 0; }
+  .desk-interrogate-heard b { color: var(--text-primary); }
+  .desk-interrogate-outcome {
+    font-size: 13px; line-height: 1.5; margin: 8px 0 12px;
+    padding: 8px 10px; border-left: 3px solid var(--accent);
+    background: var(--bg-primary); }
+  .desk-interrogate-q { margin: 10px 0; }
+  .desk-interrogate-q-label { display: block; font-size: 13px; font-weight: 500;
+                              margin-bottom: 4px; line-height: 1.45; }
+  .desk-interrogate-q textarea {
+    width: 100%; min-height: 46px; resize: vertical; font: inherit; font-size: 13px;
+    padding: 6px 8px; border-radius: 4px; border: 1px solid var(--border);
+    background: var(--bg-primary); color: var(--text-primary); }
+  .desk-interrogate-q textarea:focus { outline: none; border-color: var(--accent); }
+  .desk-interrogate-actions { display: flex; gap: 8px; align-items: center;
+                              flex-wrap: wrap; margin-top: 12px; }
+  .desk-interrogate-shape { font-size: 13px; margin-top: 12px; padding-top: 10px;
+                            border-top: 1px dashed var(--border); line-height: 1.5; }
+  .desk-interrogate-shape b { color: var(--accent); }
+  .desk-interrogate-na { font-size: 13px; line-height: 1.5; color: var(--text-secondary);
+                         border-left: 3px solid var(--text-secondary); padding-left: 10px; }
+  .desk-interrogate-last { font-size: 12px; color: var(--text-secondary); margin-top: 8px; }
+  .desk-interrogate-busy { font-size: 13px; color: var(--text-secondary); }
+  .desk-interrogate-answers { margin: 10px 0 0; font-size: 12px; color: var(--text-secondary); }
+  .desk-interrogate-answers div { margin-bottom: 3px; }
+  .desk-interrogate-answers em { color: var(--text-primary); font-style: normal; }
   .desk-queue-count { font-size: 12px; color: var(--text-secondary); }
   .desk-queue-filter {
     width: 100%; box-sizing: border-box; margin: 0 0 8px;
