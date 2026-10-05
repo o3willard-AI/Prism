@@ -31,6 +31,8 @@ import env from './lib/env.js';
 import stubAgent from './lib/stub-agent.js';
 const { startStub, freePort } = stubAgent;
 const { ROOT, LIB, API, FRONT, CERT, KEY, STUB_PORT } = env;
+import vaultSnapshotModule from './lib/vault-snapshot.js';
+const { snapshotVault, cleanNewVaultFiles } = vaultSnapshotModule;
 const ADIR = path.join(ROOT, 'prism', 'vault', 'knowledge', 'integrations', 'agentic');
 const CFG = path.join(ADIR, 'f25-loopstub.md');
 
@@ -98,8 +100,7 @@ function post(path_, obj) {
   const browser = await launch();
   const page = await browser.newPage();
   await page.ready();
-  const today = new Date().toISOString().slice(0, 10);
-
+  const vaultBefore = snapshotVault();
   try {
     await page.goto(FRONT + '/prism/');
     await page.waitFor('document.getElementById("desk-content")', 10000, 'desk');
@@ -305,25 +306,33 @@ function post(path_, obj) {
     // it had already bitten this suite once before this line existed.
     freePort(STUB_PORT);
     try { fs.unlinkSync(CFG); } catch (e) { /* gone */ }
-    // Clean any lenses this run created.
-    for (const dir of ['requirements', 'hypotheses', 'rationalizations', 'source/unordereds']) {
-      const d = path.join(ROOT, 'prism', 'vault', dir);
-      if (!fs.existsSync(d)) continue;
-      for (const f of fs.readdirSync(d)) {
-        if (f.startsWith(today + '-')) { try { fs.unlinkSync(path.join(d, f)); } catch (e) {} }
-      }
-    }
+    // Remove only paths absent from the pre-run snapshot. Date-prefix cleanup
+    // could delete a real user artifact created today; the snapshot proves
+    // ownership by exact path and also preserves the intentionally kept queue.
+    const cleanup = cleanNewVaultFiles(vaultBefore);
+    for (const problem of cleanup.remaining) console.error('  RESIDUE: ' + problem);
+    if (cleanup.remaining.length) fail++;
+    check('only artifacts this run created were removed', cleanup.remaining.length === 0,
+          cleanup.remaining.join('; '));
   }
 
   section('Cleanup');
   check('the stub config is gone', !fs.existsSync(CFG), CFG);
-  const left = [];
-  for (const dir of ['requirements', 'hypotheses', 'rationalizations', 'source/unordereds']) {
-    const d = path.join(ROOT, 'prism', 'vault', dir);
-    if (!fs.existsSync(d)) continue;
-    left.push(...fs.readdirSync(d).filter(f => f.startsWith(today + '-')).map(f => dir + '/' + f));
+  const remaining = cleanNewVaultFiles(vaultBefore).remaining;
+  check('pre-existing artifacts stayed byte-identical',
+        remaining.length === 0, remaining.slice(0, 5).join('; '));
+  const untracked = [];
+  for (const relDir of ['ingestion/unprocessed', 'requirements', 'hypotheses',
+                        'rationalizations', 'source/unordereds']) {
+    const dir = path.join(ROOT, 'prism', 'vault', relDir);
+    if (!fs.existsSync(dir)) continue;
+    for (const name of fs.readdirSync(dir)) {
+      const rel = path.join(relDir, name);
+      if (!vaultBefore.has(rel)) untracked.push(rel);
+    }
   }
-  check('no lens or source residue', left.length === 0, left.slice(0, 5).join(', '));
+  check('no new queue, lens, or source files remain', untracked.length === 0,
+        untracked.slice(0, 5).join(', '));
 
   console.log(`\n${pass}/${pass + fail} checks passed`);
   process.exit(fail ? 1 : 0);

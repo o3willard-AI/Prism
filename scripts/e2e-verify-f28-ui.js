@@ -19,6 +19,7 @@ const env = require('./lib/env.js');
 const { ROOT, FRONT, STUB_ENDPOINT } = env;
 const { launch } = require('./lib/cdp.js');
 const { startStub, freePort } = require('./lib/stub-agent.js');
+const { snapshotVault, cleanNewVaultFiles } = require('./lib/vault-snapshot.js');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -53,6 +54,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const b = await launch();
   const page = await b.newPage();
   await page.ready();
+  const vaultBefore = snapshotVault();
   try {
     await page.goto(FRONT + '/prism/');
     await page.waitFor('document.getElementById("desk-content")', 10000, 'desk');
@@ -98,23 +100,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
           styled && parseFloat(styled.size) < 13, JSON.stringify(styled));
   } finally {
     await b.close();
-    // The vault, not just the config. Opening a lens and pasting into the
-    // workflow writes a Genesis source and, if the run completes, a requirements
-    // artifact — plus a session json. The first version of this suite cleaned up
-    // only its agent config and left four files behind, which is exactly the
-    // residue this repo does not accept. F25/F26 already knew this.
-    const today = new Date().toISOString().slice(0, 10);
-    for (const rel of ['requirements', 'hypotheses', 'rationalizations',
-                       'source/unordereds']) {
-      const dir = path.join(ROOT, 'prism', 'vault', rel);
-      if (!fs.existsSync(dir)) continue;
-      for (const f of fs.readdirSync(dir)) {
-        if (!f.startsWith(today + '-')) continue;
-        try { fs.unlinkSync(path.join(dir, f)); } catch (e) {}
-      }
-    }
     freePort(env.STUB_PORT);
     try { fs.unlinkSync(CFG); } catch (e) {}
+    // Delete by exact pre-run snapshot, never by date prefix. The F28 UI journey
+    // creates an ingestion item, a source mirror, a lens artifact and a session;
+    // same-day files already present belong to the user and must survive.
+    const cleanup = cleanNewVaultFiles(vaultBefore);
+    for (const problem of cleanup.remaining) console.error('  RESIDUE: ' + problem);
+    if (cleanup.remaining.length) fail++;
+    check('only artifacts this run created were removed', cleanup.remaining.length === 0,
+          cleanup.remaining.join('; '));
   }
   console.log(`\n${pass}/${pass + fail} checks passed`);
   process.exit(fail ? 1 : 0);
